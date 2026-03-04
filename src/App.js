@@ -986,49 +986,107 @@ function MessagesPage({messages,updateMessages,currentUser,users,showToast,role}
 // ═══════════════════════════════════════════════════════════════════════════════
 // RÉSERVATIONS
 // ═══════════════════════════════════════════════════════════════════════════════
-function ReservationsAdmin({reservations,updateReservations,settings,updateSettings,users,showToast}) {
+function ReservationsAdmin({reservations,updateReservations,settings,updateSettings,users,showToast,currentUser}) {
   const [tab,setTab]=useState("today");
   const [editSettings,setEditSettings]=useState(false);
+  const [showNew,setShowNew]=useState(false);
   const [tableCount,setTableCount]=useState(settings.tableCount||10);
   const [tableCapacity,setTableCapacity]=useState(settings.tableCapacity||4);
+  // Formulaire nouvelle réservation
+  const [nDate,setNDate]=useState("");
+  const [nTime,setNTime]=useState("12:00");
+  const [nGuests,setNGuests]=useState(2);
+  const [nNote,setNNote]=useState("");
+  const [nClientSearch,setNClientSearch]=useState("");
+  const [nClient,setNClient]=useState(null);
+  const [nLoading,setNLoading]=useState(false);
+
   const today=new Date().toDateString();
   const todayRes=reservations.filter(r=>new Date(r.date).toDateString()===today).sort((a,b)=>a.time.localeCompare(b.time));
   const upcomingRes=reservations.filter(r=>new Date(r.date)>new Date()&&new Date(r.date).toDateString()!==today).sort((a,b)=>new Date(a.date)-new Date(b.date));
   const pastRes=reservations.filter(r=>new Date(r.date)<new Date()&&new Date(r.date).toDateString()!==today).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const clients=users.filter(u=>u.role==="client");
+  const filteredClients=nClientSearch.trim()===""?[]:clients.filter(c=>
+    c.name.toLowerCase().includes(nClientSearch.toLowerCase())||(c.refNumber&&c.refNumber.toLowerCase().includes(nClientSearch.toLowerCase()))
+  );
+
+  const getAvailableTable=(dateStr,timeStr)=>{
+    const dayRes=reservations.filter(r=>r.date===dateStr&&r.status!=="cancelled"&&Math.abs(parseInt(r.time)-parseInt(timeStr))<2);
+    const usedTables=dayRes.map(r=>r.tableNumber);
+    for(let i=1;i<=(settings.tableCount||10);i++){if(!usedTables.includes(i)) return i;}
+    return null;
+  };
 
   const saveTableSettings=async()=>{
     await updateSettings({...settings,tableCount:parseInt(tableCount)||10,tableCapacity:parseInt(tableCapacity)||4});
     setEditSettings(false);showToast("Tables mises à jour ✅");
   };
+
+  const createReservation=async()=>{
+    if(!nDate) return showToast("Date requise","error");
+    if(!nTime) return showToast("Heure requise","error");
+    if(nGuests<1) return showToast("Nombre de personnes invalide","error");
+    setNLoading(true);
+    const tableNum=getAvailableTable(nDate,nTime);
+    if(!tableNum){setNLoading(false);return showToast("Complet pour ce créneau !","error");}
+    const res={
+      id:genId(),
+      clientId:nClient?.id||null,
+      clientName:nClient?.name||"Anonyme",
+      refNumber:nClient?.refNumber||null,
+      date:nDate,time:nTime,
+      guests:nGuests,
+      note:nNote.trim(),
+      tableNumber:tableNum,
+      status:"confirmed", // direct confirmée par le staff
+      createdAt:new Date().toISOString(),
+      createdBy:currentUser?.name||"Staff",
+    };
+    await updateReservations([...reservations,res]);
+    setNDate("");setNTime("12:00");setNGuests(2);setNNote("");setNClient(null);setNClientSearch("");
+    setNLoading(false);setShowNew(false);
+    showToast(`Réservation créée — Table ${tableNum} ✅`);
+  };
+
   const cancelRes=async(id)=>{
-    await updateReservations(reservations.filter(r=>r.id!==id));
+    await updateReservations(reservations.map(r=>r.id===id?{...r,status:"cancelled"}:r));
     showToast("Réservation annulée");
   };
   const confirmRes=async(id)=>{
     await updateReservations(reservations.map(r=>r.id===id?{...r,status:"confirmed"}:r));
     showToast("Réservation confirmée ✅");
   };
+  const deleteRes=async(id)=>{
+    await updateReservations(reservations.filter(r=>r.id!==id));
+    showToast("Réservation supprimée");
+  };
 
   const ResCard=({r})=>{
     const client=users.find(u=>u.id===r.clientId);
+    const isAnon=!r.clientId||r.clientName==="Anonyme";
     return (
       <div style={{...S.card,border:`1px solid ${r.status==="confirmed"?"#166534":r.status==="cancelled"?"#991b1b":"#30363d"}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8}}>
           <div>
-            <div style={{fontWeight:700,fontSize:15}}>{r.clientName}</div>
-            {client?.refNumber&&<div style={{fontSize:11,color:"#d4a853"}}>{client.refNumber}</div>}
-            <div style={{fontSize:13,color:"#9ca3af",marginTop:4}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2}}>
+              <div style={{fontWeight:700,fontSize:15}}>{r.clientName}</div>
+              {isAnon&&<span style={{fontSize:10,background:"#374151",color:"#9ca3af",padding:"1px 6px",borderRadius:8}}>anonyme</span>}
+              {r.createdBy&&<span style={{fontSize:10,background:"#1c1a00",color:"#d4a853",padding:"1px 6px",borderRadius:8}}>par {r.createdBy}</span>}
+            </div>
+            {client?.refNumber&&<div style={{fontSize:11,color:"#d4a853",marginBottom:2}}>{client.refNumber}</div>}
+            <div style={{fontSize:13,color:"#9ca3af",marginTop:2}}>
               📅 {fmtDateOnly(r.date)} à {r.time}<br/>
               👥 {r.guests} personne{r.guests>1?"s":""} · 🪑 Table {r.tableNumber}
             </div>
             {r.note&&<div style={{fontSize:12,color:"#f97316",marginTop:4}}>📝 {r.note}</div>}
           </div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
             <span style={{padding:"3px 10px",borderRadius:12,fontSize:11,fontWeight:700,background:r.status==="confirmed"?"#1a3a1a":r.status==="cancelled"?"#7f1d1d":"#1f2937",color:r.status==="confirmed"?"#86efac":r.status==="cancelled"?"#fca5a5":"#9ca3af"}}>
               {r.status==="confirmed"?"✅ Confirmée":r.status==="cancelled"?"❌ Annulée":"⏳ En attente"}
             </span>
-            {r.status==="pending"&&<button style={{...S.btnSm,background:"#1a3a1a",color:"#86efac",borderColor:"#166534"}} onClick={()=>confirmRes(r.id)}>✅ Confirmer</button>}
-            {r.status!=="cancelled"&&<button style={{...S.btnSm,...S.btnDanger}} onClick={()=>cancelRes(r.id)}>❌ Annuler</button>}
+            {r.status==="pending"&&<button style={{...S.btnSm,background:"#1a3a1a",color:"#86efac",borderColor:"#166534"}} onClick={()=>confirmRes(r.id)}>✅</button>}
+            {r.status!=="cancelled"&&<button style={{...S.btnSm,...S.btnDanger}} onClick={()=>cancelRes(r.id)}>❌</button>}
+            <button style={{...S.btnSm,background:"#3b0764",color:"#d8b4fe",borderColor:"#6d28d9"}} onClick={()=>deleteRes(r.id)}>🗑️</button>
           </div>
         </div>
       </div>
@@ -1039,9 +1097,62 @@ function ReservationsAdmin({reservations,updateReservations,settings,updateSetti
     <div style={S.page}>
       <div style={{...S.pageHeader,flexWrap:"wrap",gap:8}}>
         <h1 style={S.pageTitle}>📅 Réservations</h1>
-        <button style={{...S.btnSm}} onClick={()=>setEditSettings(!editSettings)}>⚙️ Paramètres tables</button>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button style={{...S.btn,width:"auto",padding:"9px 16px",fontSize:13}} onClick={()=>setShowNew(true)}>＋ Nouvelle résa</button>
+          <button style={{...S.btnSm}} onClick={()=>setEditSettings(!editSettings)}>⚙️ Tables</button>
+        </div>
       </div>
 
+      {/* Modal nouvelle réservation */}
+      {showNew&&<div style={S.modal}><div style={S.modalCard} className="modal-card-mobile">
+        <h3 style={S.cardTitle}>📅 Nouvelle réservation</h3>
+
+        {/* Recherche client */}
+        <label style={S.label}>👤 Client (optionnel)</label>
+        <input style={S.input} placeholder="Nom ou REF-XXXXX pour lier un compte…" value={nClientSearch}
+          onChange={e=>{setNClientSearch(e.target.value);setNClient(null);}}/>
+        {filteredClients.length>0&&<div style={{background:"#0d1117",border:"1px solid #30363d",borderRadius:8,marginBottom:12,maxHeight:140,overflowY:"auto"}}>
+          {filteredClients.map(cl=>(
+            <div key={cl.id} style={{padding:"9px 12px",cursor:"pointer",borderBottom:"1px solid #21262d",display:"flex",justifyContent:"space-between",alignItems:"center",background:nClient?.id===cl.id?"#1f2937":"transparent"}}
+              onClick={()=>{setNClient(cl);setNClientSearch(cl.name);}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:13}}>{cl.name}</div>
+                <div style={{fontSize:11,color:"#d4a853"}}>{cl.refNumber}</div>
+              </div>
+              <span style={{fontSize:11,color:"#9ca3af"}}>⭐ {cl.points||0}</span>
+            </div>
+          ))}
+        </div>}
+        {nClient
+          ?<div style={{background:"#1a3a1a",border:"1px solid #166534",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13,color:"#86efac"}}>✅ Lié à : {nClient.name} · {nClient.refNumber}</div>
+          :nClientSearch===""&&<div style={{background:"#1a1a2e",border:"1px solid #374151",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#9ca3af"}}>📋 Aucun compte lié → réservation anonyme</div>
+        }
+
+        {/* Détails */}
+        <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+          <div style={{flex:1,minWidth:130}}>
+            <label style={S.label}>📅 Date</label>
+            <input style={S.input} type="date" value={nDate} min={new Date().toISOString().split("T")[0]} onChange={e=>setNDate(e.target.value)}/>
+          </div>
+          <div style={{flex:1,minWidth:110}}>
+            <label style={S.label}>🕐 Heure</label>
+            <input style={S.input} type="time" value={nTime} onChange={e=>setNTime(e.target.value)}/>
+          </div>
+          <div style={{flex:1,minWidth:100}}>
+            <label style={S.label}>👥 Personnes</label>
+            <input style={S.input} type="number" min="1" max={settings.tableCapacity||10} value={nGuests} onChange={e=>setNGuests(parseInt(e.target.value)||1)}/>
+          </div>
+        </div>
+        <label style={S.label}>📝 Note</label>
+        <input style={S.input} placeholder="Anniversaire, allergie…" value={nNote} onChange={e=>setNNote(e.target.value)}/>
+
+        <div style={{display:"flex",gap:8}}>
+          <button style={{...S.btn,opacity:nLoading?0.6:1}} onClick={createReservation} disabled={nLoading}>{nLoading?"⏳…":"📅 Créer"}</button>
+          <button style={S.btnOutline} onClick={()=>{setShowNew(false);setNClient(null);setNClientSearch("");}}>Annuler</button>
+        </div>
+      </div></div>}
+
+      {/* Config tables */}
       {editSettings&&<div style={S.card}>
         <h3 style={S.cardTitle}>🪑 Configuration des tables</h3>
         <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
@@ -1060,7 +1171,7 @@ function ReservationsAdmin({reservations,updateReservations,settings,updateSetti
 
       <div style={S.statsGrid}>
         <div style={S.statCard}><div style={{fontSize:20,marginBottom:4}}>📅</div><div style={{fontSize:20,fontWeight:700,color:"#d4a853"}}>{todayRes.length}</div><div style={{fontSize:12,color:"#9ca3af"}}>Aujourd'hui</div></div>
-        <div style={S.statCard}><div style={{fontSize:20,marginBottom:4}}>🪑</div><div style={{fontSize:20,fontWeight:700,color:"#3b82f6"}}>{settings.tableCount||10}</div><div style={{fontSize:12,color:"#9ca3af"}}>Tables ({settings.tableCapacity||4} places)</div></div>
+        <div style={S.statCard}><div style={{fontSize:20,marginBottom:4}}>🪑</div><div style={{fontSize:20,fontWeight:700,color:"#3b82f6"}}>{settings.tableCount||10}</div><div style={{fontSize:12,color:"#9ca3af"}}>Tables ({settings.tableCapacity||4} pl.)</div></div>
         <div style={S.statCard}><div style={{fontSize:20,marginBottom:4}}>📆</div><div style={{fontSize:20,fontWeight:700,color:"#22c55e"}}>{upcomingRes.length}</div><div style={{fontSize:12,color:"#9ca3af"}}>À venir</div></div>
       </div>
 
@@ -1287,88 +1398,255 @@ function ContactPage({settings}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // CHATBOT
 // ═══════════════════════════════════════════════════════════════════════════════
-function ChatbotPage({menu,settings,reservations,currentUser}) {
-  const [msgs,setMsgs]=useState([{role:"assistant",text:`Bonjour ${currentUser.name} ! 👋 Je suis l'assistant de ${settings.restaurantName||"RestoPro"}. Posez-moi vos questions sur le restaurant, le menu, les horaires ou les réservations !`}]);
+function ChatbotPage({menu,settings,reservations,currentUser,reviews}) {
+  const name=settings.restaurantName||"RestoPro";
+  const [msgs,setMsgs]=useState([{from:"bot",text:`Bonjour ${currentUser.name} ! 👋 Je suis l'assistant de **${name}**. Posez-moi vos questions sur le restaurant, le menu, les horaires ou vos réservations !`,time:new Date()}]);
   const [input,setInput]=useState("");
-  const [loading,setLoading]=useState(false);
   const endRef=useRef(null);
   useEffect(()=>endRef.current?.scrollIntoView({behavior:"smooth"}),[msgs]);
 
-  const menuDesc=menu.filter(m=>m.available).map(m=>`${CAT_ICONS[m.cat]} ${m.name} (${CAT_LABELS[m.cat]}) : ${m.desc||"—"} — ${fmt(m.price)}`).join("\n");
-  const myRes=reservations.filter(r=>r.clientId===currentUser.id&&r.status!=="cancelled").map(r=>`${fmtDateOnly(r.date)} à ${r.time} — Table ${r.tableNumber} — ${r.guests} personnes — Statut : ${r.status==="confirmed"?"Confirmée":"En attente"}`).join("\n")||"Aucune réservation";
+  // ── Moteur de réponse local ──────────────────────────────────────────────────
+  const buildReply=(q)=>{
+    const t=q.toLowerCase().trim();
+    const has=(...words)=>words.some(w=>t.includes(w));
 
-  const systemPrompt=`Tu es l'assistant virtuel du restaurant ${settings.restaurantName||"RestoPro"}. Tu réponds UNIQUEMENT aux questions concernant ce restaurant. Sois précis, simple et chaleureux. Réponds toujours en français.
-
-INFORMATIONS DU RESTAURANT :
-- Nom : ${settings.restaurantName||"RestoPro"}
-- Adresse : ${settings.address||"Non renseignée"}
-- Téléphone : ${settings.phone||"Non renseigné"}
-- Email : ${settings.email||"Non renseigné"}
-- Horaires : ${settings.hours||"Non renseignés"}
-- SIRET : ${settings.siret||"Non renseigné"}
-
-MENU DISPONIBLE :
-${menuDesc}
-
-RÉSERVATIONS DU CLIENT :
-${myRes}
-
-RÈGLES IMPORTANTES :
-- Réponds UNIQUEMENT aux questions sur ce restaurant (menu, horaires, réservations, contact, avis, fidélité, commandes)
-- Si la question ne concerne pas le restaurant, dis : "Je suis uniquement là pour vous aider concernant ${settings.restaurantName}. Avez-vous une question sur notre restaurant ?"
-- Sois concis (max 3-4 phrases par réponse)
-- Ne donne jamais d'informations sur d'autres restaurants ou sujets non liés`;
-
-  const send=async()=>{
-    if(!input.trim()||loading) return;
-    const userMsg={role:"user",text:input.trim()};
-    const newMsgs=[...msgs,userMsg];
-    setMsgs(newMsgs);setInput("");setLoading(true);
-    try {
-      const apiMessages=newMsgs.filter(m=>m.role!=="system").map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.text}));
-      const res=await fetch("/api/chat",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({system:systemPrompt,messages:apiMessages})
-      });
-      const data=await res.json();
-      const reply=data.text||"Désolé, je n'ai pas pu répondre.";
-      setMsgs(p=>[...p,{role:"assistant",text:reply}]);
-    } catch(e) {
-      setMsgs(p=>[...p,{role:"assistant",text:"Désolé, une erreur s'est produite. Réessayez."}]);
+    // Horaires
+    if(has("horaire","heure","ouvert","ferme","ouverture","fermeture","quand")){
+      return settings.hours
+        ? `🕐 **Horaires d'ouverture :**
+${settings.hours}`
+        : "Les horaires ne sont pas encore renseignés. Contactez-nous au "+( settings.phone||"numéro indiqué dans Contact")+" pour confirmer.";
     }
-    setLoading(false);
+
+    // Adresse / localisation
+    if(has("adresse","où","situe","trouver","localisation","plan","comment venir")){
+      return `📍 **Adresse :**
+${settings.address||"Non renseignée"}
+
+Tél : ${settings.phone||"—"}
+Email : ${settings.email||"—"}`;
+    }
+
+    // Téléphone / contact
+    if(has("telephone","téléphone","appeler","contact","email","mail")){
+      return `📞 **Contact :**
+Tél : ${settings.phone||"—"}
+Email : ${settings.email||"—"}`;
+    }
+
+    // Réservation
+    if(has("réservation","réserver","reserver","table","place","dispo")){
+      const myRes=reservations.filter(r=>r.clientId===currentUser.id&&r.status!=="cancelled");
+      const upcoming=myRes.filter(r=>new Date(r.date)>=new Date());
+      let reply="📅 **Réservations :**
+Pour réserver une table, rendez-vous dans l'onglet **📅 Réserver** de l'application.";
+      if(upcoming.length>0){
+        reply+="
+
+**Vos réservations à venir :**";
+        upcoming.forEach(r=>{reply+=`
+• ${fmtDateOnly(r.date)} à ${r.time} — Table ${r.tableNumber} — ${r.guests} pers. (${r.status==="confirmed"?"✅ Confirmée":"⏳ En attente"})`;});
+      }
+      return reply;
+    }
+
+    // Menu complet
+    if(has("menu","carte","manger","plat","entrée","dessert","boisson","prix")){
+      const cats=["entree","plat","dessert","boisson","menu"];
+      const available=menu.filter(m=>m.available);
+      if(available.length===0) return "Le menu n'est pas encore disponible. Revenez bientôt !";
+      let reply="🍽️ **Notre menu :**
+";
+      cats.forEach(cat=>{
+        const items=available.filter(m=>m.cat===cat);
+        if(items.length===0) return;
+        reply+=`
+**${CAT_ICONS[cat]} ${CAT_LABELS[cat]}**
+`;
+        items.forEach(it=>{reply+=`• ${it.name}${it.desc?" — "+it.desc:""} → **${fmt(it.price)}**
+`;});
+      });
+      return reply.trim();
+    }
+
+    // Entrées spécifique
+    if(has("entrée","salade","soupe","starter")){
+      const items=menu.filter(m=>m.cat==="entree"&&m.available);
+      if(!items.length) return "Pas d'entrées disponibles pour le moment.";
+      return "🥗 **Nos entrées :**
+"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("
+");
+    }
+
+    // Plats
+    if(has("plat","principal","main","viande","poisson","risotto")){
+      const items=menu.filter(m=>m.cat==="plat"&&m.available);
+      if(!items.length) return "Pas de plats disponibles pour le moment.";
+      return "🍽️ **Nos plats :**
+"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("
+");
+    }
+
+    // Desserts
+    if(has("dessert","sucré","gâteau","glace","fondant","crème")){
+      const items=menu.filter(m=>m.cat==="dessert"&&m.available);
+      if(!items.length) return "Pas de desserts disponibles pour le moment.";
+      return "🍮 **Nos desserts :**
+"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("
+");
+    }
+
+    // Boissons
+    if(has("boisson","boire","eau","vin","jus","verre","alcool")){
+      const items=menu.filter(m=>m.cat==="boisson"&&m.available);
+      if(!items.length) return "Pas de boissons disponibles pour le moment.";
+      return "🥤 **Nos boissons :**
+"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("
+");
+    }
+
+    // Fidélité / points
+    if(has("fidélité","fidelite","point","récompense","recompense","carte")){
+      return `⭐ **Programme fidélité :**
+Vous cumulez **${settings.pointsPerEuro||1} point par euro** dépensé.
+Vous avez actuellement **${currentUser.points||0} points**.
+
+Consultez vos récompenses disponibles dans l'onglet **⭐ Fidélité**.`;
+    }
+
+    // Commande / commander
+    if(has("commander","commande","passer commande","comment commander")){
+      return "📋 **Comment commander :**
+1. Allez dans l'onglet **🍽️ Menu**
+2. Ajoutez vos articles au panier
+3. Choisissez Sur place ou À emporter
+4. Confirmez et réglez au comptoir";
+    }
+
+    // Avis / notes
+    if(has("avis","note","étoile","etoile","commentaire","avis client")){
+      const avg=reviews&&reviews.length>0?(reviews.reduce((s,r)=>s+r.stars,0)/reviews.length).toFixed(1):null;
+      return avg
+        ? `⭐ **Avis clients :**
+Note moyenne : **${avg}/5** sur ${reviews.length} avis.
+
+Consultez tous les avis dans l'onglet **⭐ Avis**.`
+        : "Pas encore d'avis. Soyez le premier à donner votre avis dans l'onglet **⭐ Avis** !";
+    }
+
+    // Paiement
+    if(has("paiement","payer","carte","espèces","cb","cash","moyen de paiement")){
+      return "💳 **Modes de paiement acceptés :**
+• Carte bancaire (CB, Visa, Mastercard)
+• Espèces
+
+Le règlement se fait au comptoir.";
+    }
+
+    // Allergie / régime
+    if(has("allergie","allergène","allergene","vegetarien","végétarien","vegan","sans gluten","halal","kasher")){
+      return `🥗 Pour toute question sur les allergènes ou régimes alimentaires spéciaux, contactez-nous directement :
+📞 ${settings.phone||"—"}
+✉️ ${settings.email||"—"}
+
+Nos équipes vous conseilleront avec plaisir.`;
+    }
+
+    // Messagerie / contact humain
+    if(has("parler","humain","personne","équipe","message","ecrire")){
+      return "💬 Vous pouvez contacter directement notre équipe via l'onglet **💬 Messages** de l'application. Nous vous répondrons dans les plus brefs délais !";
+    }
+
+    // Merci / salutation
+    if(has("merci","super","parfait","génial","excellent","bravo")){
+      return `😊 Avec plaisir ! N'hésitez pas si vous avez d'autres questions sur ${name}.`;
+    }
+    if(has("bonjour","salut","bonsoir","hello","coucou")){
+      return `👋 Bonjour ! Comment puis-je vous aider concernant ${name} ?`;
+    }
+    if(has("au revoir","bye","bonne journée","bonne soirée","à bientôt")){
+      return `👋 À bientôt chez ${name} ! Bonne journée !`;
+    }
+
+    // Hors sujet / inconnu
+    return `Je suis uniquement là pour vous aider concernant **${name}** (menu, horaires, réservations, contact, fidélité…).
+
+Voici ce que je peux faire :
+• 🍽️ Vous montrer le menu
+• 🕐 Donner les horaires
+• 📍 Indiquer l'adresse
+• 📅 Infos sur vos réservations
+• ⭐ Programme fidélité
+
+Quelle est votre question ?`;
+  };
+
+  const send=()=>{
+    if(!input.trim()) return;
+    const q=input.trim();
+    const userMsg={from:"user",text:q,time:new Date()};
+    const reply=buildReply(q);
+    setMsgs(p=>[...p,userMsg,{from:"bot",text:reply,time:new Date()}]);
+    setInput("");
+  };
+
+  const suggestions=["📋 Voir le menu","🕐 Horaires","📍 Adresse","📅 Mes réservations","⭐ Mes points"];
+
+  // Render text avec **bold**
+  const renderText=(text)=>{
+    const parts=text.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((p,i)=>p.startsWith("**")&&p.endsWith("**")
+      ?<strong key={i} style={{color:"#f3f4f6"}}>{p.slice(2,-2)}</strong>
+      :<span key={i}>{p}</span>
+    );
   };
 
   return (
     <div style={S.page}>
-      <h1 style={S.pageTitle}>🤖 Assistant RestoPro</h1>
+      <h1 style={S.pageTitle}>🤖 Assistant {name}</h1>
       <div style={{...S.card,padding:0,overflow:"hidden"}}>
+        {/* Header */}
         <div style={{background:"#1f2937",padding:"12px 16px",borderBottom:"1px solid #30363d",display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:36,height:36,borderRadius:"50%",background:"#d4a853",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🤖</div>
-          <div><div style={{fontWeight:700,fontSize:14}}>Assistant {settings.restaurantName||"RestoPro"}</div><div style={{fontSize:11,color:"#22c55e"}}>● En ligne</div></div>
+          <div style={{width:38,height:38,borderRadius:"50%",background:"#d4a853",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>🤖</div>
+          <div>
+            <div style={{fontWeight:700,fontSize:14}}>Assistant {name}</div>
+            <div style={{fontSize:11,color:"#22c55e"}}>● Toujours disponible</div>
+          </div>
         </div>
-        <div style={{minHeight:320,maxHeight:420,overflowY:"auto",padding:16,display:"flex",flexDirection:"column",gap:12}}>
+
+        {/* Messages */}
+        <div style={{minHeight:300,maxHeight:450,overflowY:"auto",padding:16,display:"flex",flexDirection:"column",gap:12,background:"#0d1117"}}>
           {msgs.map((m,i)=>(
-            <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
-              <div style={{maxWidth:"80%",background:m.role==="user"?"#1f2937":"#161b22",border:`1px solid ${m.role==="user"?"#374151":"#d4a853"}`,borderRadius:12,padding:"10px 14px",fontSize:14,lineHeight:1.6,color:"#f3f4f6"}}>
-                {m.text}
+            <div key={i} style={{display:"flex",justifyContent:m.from==="user"?"flex-end":"flex-start",alignItems:"flex-end",gap:8}}>
+              {m.from==="bot"&&<div style={{width:28,height:28,borderRadius:"50%",background:"#d4a853",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>🤖</div>}
+              <div style={{maxWidth:"78%",background:m.from==="user"?"#1f2937":"#161b22",border:`1px solid ${m.from==="user"?"#374151":"#d4a853"}`,borderRadius:m.from==="user"?"16px 16px 4px 16px":"16px 16px 16px 4px",padding:"10px 14px",fontSize:14,lineHeight:1.7,color:"#f3f4f6",whiteSpace:"pre-wrap"}}>
+                {renderText(m.text)}
+                <div style={{fontSize:9,color:"#6b7280",marginTop:4,textAlign:"right"}}>{m.time.getHours().toString().padStart(2,"0")}:{m.time.getMinutes().toString().padStart(2,"0")}</div>
               </div>
             </div>
           ))}
-          {loading&&<div style={{display:"flex",justifyContent:"flex-start"}}><div style={{background:"#161b22",border:"1px solid #d4a853",borderRadius:12,padding:"10px 14px",fontSize:14,color:"#9ca3af"}}>⏳ En train de répondre…</div></div>}
           <div ref={endRef}/>
         </div>
-        <div style={{borderTop:"1px solid #30363d",padding:12,display:"flex",gap:8}}>
-          <input style={{...S.input,marginBottom:0,flex:1}} placeholder="Posez votre question…" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()}/>
-          <button style={{...S.btn,width:"auto",padding:"12px 16px",opacity:loading?0.6:1}} onClick={send} disabled={loading}>📤</button>
+
+        {/* Suggestions rapides */}
+        <div style={{padding:"8px 12px",borderTop:"1px solid #21262d",display:"flex",gap:6,flexWrap:"wrap",background:"#0d1117"}}>
+          {suggestions.map(s=>(
+            <button key={s} style={{...S.btnSm,fontSize:11,padding:"5px 10px",background:"#1f2937",borderRadius:16}} onClick={()=>{setInput(s.replace(/^[^\s]+\s/,""));setTimeout(()=>document.querySelector("#chatbot-input")?.focus(),50);}}>
+              {s}
+            </button>
+          ))}
+        </div>
+
+        {/* Input */}
+        <div style={{borderTop:"1px solid #30363d",padding:"10px 12px",display:"flex",gap:8,background:"#161b22"}}>
+          <input id="chatbot-input" style={{...S.input,marginBottom:0,flex:1,fontSize:14,padding:"10px 14px"}} placeholder="Posez votre question…" value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}/>
+          <button style={{...S.btn,width:"auto",padding:"10px 16px",fontSize:16}} onClick={send}>📤</button>
         </div>
       </div>
-      <div style={{marginTop:12,fontSize:11,color:"#6b7280",textAlign:"center"}}>L'assistant répond uniquement aux questions concernant {settings.restaurantName||"RestoPro"}</div>
+      <div style={{marginTop:10,fontSize:11,color:"#6b7280",textAlign:"center"}}>Assistant disponible 24h/24 — répond uniquement sur {name}</div>
     </div>
   );
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ADMIN PRODUCTS
