@@ -67,18 +67,34 @@ const registerSW = async () => {
 
 // Demande la permission + enregistre le SW + sauvegarde la sub dans Firebase
 const askNotifPermission = async (userId) => {
-  if (!("Notification" in window)) return false;
-  if (Notification.permission === "denied") return false;
-  const perm = await Notification.requestPermission();
-  if (perm !== "granted") return false;
-  const sub = await registerSW();
-  if (sub && userId) {
-    // On sauvegarde la subscription dans Firebase sous pushSubs/userId
-    try {
-      await setDoc(doc(db, "restopro_push", userId), { sub: JSON.stringify(sub), updatedAt: new Date().toISOString() });
-    } catch(e) { console.warn("Push sub save failed", e); }
+  try {
+    if (!("Notification" in window)) { console.warn("Notifs non supportées"); return false; }
+    if (Notification.permission === "denied") { console.warn("Notifs refusées"); return false; }
+    const perm = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+    if (perm !== "granted") return false;
+    if (!("serviceWorker" in navigator)) { console.warn("SW non supporté"); return false; }
+    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8(VAPID_PUBLIC_KEY),
+      });
+    }
+    if (!sub) { console.warn("Subscription échouée"); return false; }
+    if (userId) {
+      await setDoc(doc(db, "restopro_push", userId), {
+        sub: JSON.stringify(sub.toJSON()),
+        updatedAt: new Date().toISOString()
+      });
+      console.log("Push subscription sauvegardée pour", userId);
+    }
+    return true;
+  } catch(e) {
+    console.error("askNotifPermission error:", e);
+    return false;
   }
-  return true;
 };
 
 // Envoie la notification via notre Vercel Function
@@ -486,45 +502,198 @@ function StatCard({icon,label,value,color}) {
 }
 
 function AdminMenu({ menu, updateMenu, showToast }) {
-  const [form,setForm]=useState(null);
-  const cats=["entree","plat","dessert","boisson","menu"];
-  const del=async(id)=>{if(!window.confirm("Supprimer ?"))return;await updateMenu(menu.filter(m=>m.id!==id));showToast("Supprimé");};
-  const toggle=async(id)=>await updateMenu(menu.map(m=>m.id===id?{...m,available:!m.available}:m));
-  const saveItem=async(item)=>{
-    if(!item.name||!item.price)return showToast("Nom et prix requis","error");
-    await updateMenu(item.id?menu.map(m=>m.id===item.id?item:m):[...menu,{...item,id:genId()}]);
-    setForm(null);showToast("Sauvegardé ✅");
+  const cats = ["entree","plat","dessert","boisson","menu"];
+  const [activeTab, setActiveTab] = useState("plat");
+  const [form, setForm] = useState(null);
+  const [search, setSearch] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const { isMobile } = useBreakpoint();
+
+  const del = async (id) => {
+    await updateMenu(menu.filter(m => m.id !== id));
+    setDeleteConfirm(null);
+    showToast("Produit supprimé");
   };
+  const toggle = async (id) => {
+    await updateMenu(menu.map(m => m.id === id ? {...m, available:!m.available} : m));
+    showToast("Disponibilité mise à jour ✅");
+  };
+  const saveItem = async (item) => {
+    if (!item.name.trim()) return showToast("Nom requis","error");
+    if (!item.price || isNaN(item.price)) return showToast("Prix invalide","error");
+    const saved = {...item, price:parseFloat(item.price)||0, points:parseInt(item.points)||0};
+    await updateMenu(saved.id ? menu.map(m=>m.id===saved.id?saved:m) : [...menu,{...saved,id:genId()}]);
+    setForm(null);
+    showToast(saved.id ? "Produit modifié ✅" : "Produit ajouté ✅");
+  };
+
+  const filtered = menu.filter(m =>
+    m.cat === activeTab &&
+    (!search || m.name.toLowerCase().includes(search.toLowerCase()) || (m.desc||"").toLowerCase().includes(search.toLowerCase()))
+  );
+  const totalItems = menu.filter(m => m.cat === activeTab).length;
+  const availableItems = menu.filter(m => m.cat === activeTab && m.available).length;
+
   return (
     <div style={S.page}>
-      <div style={S.pageHeader}>
-        <h1 style={S.pageTitle}>🍽️ Gestion du menu</h1>
-        <button style={{...S.btn,width:"auto"}} onClick={()=>setForm({cat:"plat",name:"",desc:"",price:"",points:"",available:true})}>+ Ajouter</button>
+      {/* Header */}
+      <div style={{...S.pageHeader, flexWrap:"wrap", gap:8}}>
+        <h1 style={S.pageTitle}>🍽️ Produits & Menu</h1>
+        <button style={{...S.btn,width:"auto",display:"flex",alignItems:"center",gap:6}} onClick={()=>setForm({cat:activeTab,name:"",desc:"",price:"",points:"",available:true})}>
+          ＋ Nouveau produit
+        </button>
       </div>
-      {form&&<MenuForm item={form} onSave={saveItem} onCancel={()=>setForm(null)}/>}
-      {cats.map(cat=>{
-        const items=menu.filter(m=>m.cat===cat);
-        if(!items.length)return null;
-        return (
-          <div key={cat} style={S.card}>
-            <h3 style={S.cardTitle}>{CAT_ICONS[cat]} {CAT_LABELS[cat]}</h3>
-            {items.map(item=>(
-              <div key={item.id} style={{...S.row,opacity:item.available?1:0.5}}>
-                <div>
-                  <strong>{item.name}</strong>{!item.available&&<span style={S.pillRed}>Indisponible</span>}
-                  <div style={{fontSize:12,color:"#9ca3af"}}>{item.desc}</div>
-                  <div style={{fontSize:13,color:"#d4a853",marginTop:4}}>{fmt(item.price)} · {item.points} pts</div>
-                </div>
-                <div style={{display:"flex",gap:8}}>
-                  <button style={S.btnSm} onClick={()=>toggle(item.id)}>{item.available?"🚫":"✅"}</button>
-                  <button style={S.btnSm} onClick={()=>setForm({...item})}>✏️</button>
-                  <button style={{...S.btnSm,...S.btnDanger}} onClick={()=>del(item.id)}>🗑️</button>
-                </div>
+
+      {/* Onglets catégories */}
+      <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
+        {cats.map(c=>{
+          const count = menu.filter(m=>m.cat===c).length;
+          const isActive = activeTab===c;
+          return (
+            <div key={c}
+              style={{...S.tab,...(isActive?S.tabActive:{}),display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}
+              onClick={()=>{setActiveTab(c);setSearch("");}}>
+              <span>{CAT_ICONS[c]}</span>
+              {!isMobile&&<span>{CAT_LABELS[c]}</span>}
+              {isMobile&&<span style={{fontSize:11}}>{CAT_LABELS[c].slice(0,3)}.</span>}
+              <span style={{background:isActive?"rgba(0,0,0,0.2)":"#374151",color:isActive?"#0d1117":"#9ca3af",borderRadius:10,padding:"1px 6px",fontSize:11,fontWeight:700}}>{count}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Stats de la catégorie + barre recherche */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,gap:10,flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:10}}>
+          <span style={{fontSize:12,color:"#9ca3af"}}>{totalItems} produit{totalItems>1?"s":""}</span>
+          <span style={{fontSize:12,color:"#22c55e"}}>✅ {availableItems} dispo</span>
+          {totalItems-availableItems>0&&<span style={{fontSize:12,color:"#ef4444"}}>🚫 {totalItems-availableItems} indispo</span>}
+        </div>
+        <input
+          style={{...S.input,marginBottom:0,width:isMobile?"100%":220,padding:"8px 12px",fontSize:13}}
+          placeholder="🔍 Rechercher..."
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+        />
+      </div>
+
+      {/* Liste des produits */}
+      {filtered.length===0 && (
+        <div style={{...S.card,textAlign:"center",padding:40}}>
+          <div style={{fontSize:40,marginBottom:12}}>{CAT_ICONS[activeTab]}</div>
+          <p style={{color:"#6b7280",marginBottom:16}}>
+            {search ? `Aucun résultat pour "${search}"` : `Aucun produit dans la catégorie ${CAT_LABELS[activeTab]}`}
+          </p>
+          <button style={{...S.btn,width:"auto"}} onClick={()=>setForm({cat:activeTab,name:"",desc:"",price:"",points:"",available:true})}>
+            ＋ Ajouter le premier produit
+          </button>
+        </div>
+      )}
+
+      <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
+        {filtered.map(item=>(
+          <div key={item.id} style={{
+            background:"#161b22",
+            border:`1px solid ${item.available?"#30363d":"#7f1d1d"}`,
+            borderRadius:12,padding:16,
+            opacity:item.available?1:0.7,
+            transition:"all .2s",
+            position:"relative"
+          }}>
+            {/* Badge disponibilité */}
+            <div style={{position:"absolute",top:12,right:12}}>
+              {item.available
+                ? <span style={{...S.pill,background:"#1a3a1a",color:"#22c55e",fontSize:10}}>✅ Dispo</span>
+                : <span style={{...S.pillRed,fontSize:10}}>🚫 Indispo</span>
+              }
+            </div>
+
+            {/* Icône catégorie */}
+            <div style={{fontSize:28,marginBottom:8}}>{CAT_ICONS[item.cat]}</div>
+
+            {/* Nom & desc */}
+            <div style={{fontWeight:700,fontSize:15,marginBottom:4,paddingRight:60}}>{item.name}</div>
+            {item.desc&&<div style={{fontSize:12,color:"#9ca3af",marginBottom:8,lineHeight:1.4}}>{item.desc}</div>}
+
+            {/* Prix & points */}
+            <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12}}>
+              <span style={{color:"#d4a853",fontWeight:700,fontSize:16}}>{fmt(item.price)}</span>
+              <span style={{fontSize:11,color:"#9ca3af",background:"#1f2937",padding:"2px 7px",borderRadius:10}}>⭐ {item.points||0} pts</span>
+            </div>
+
+            {/* Actions */}
+            <div style={{display:"flex",gap:6}}>
+              <button style={{...S.btnSm,flex:1,textAlign:"center"}} onClick={()=>toggle(item.id)}>
+                {item.available?"🚫 Désactiver":"✅ Activer"}
+              </button>
+              <button style={{...S.btnSm,padding:"7px 10px"}} onClick={()=>setForm({...item})}>✏️</button>
+              <button style={{...S.btnSm,...S.btnDanger,padding:"7px 10px"}} onClick={()=>setDeleteConfirm(item)}>🗑️</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Modal ajout/modification */}
+      {form&&(
+        <div style={S.modal}><div style={S.modalCard}>
+          <h3 style={S.cardTitle}>{form.id?"✏️ Modifier":"＋ Nouveau"} produit</h3>
+
+          <label style={S.label}>Catégorie</label>
+          <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+            {cats.map(c=>(
+              <div key={c}
+                style={{...S.tab,...(form.cat===c?S.tabActive:{}),cursor:"pointer",fontSize:12,padding:"6px 10px"}}
+                onClick={()=>setForm(p=>({...p,cat:c}))}>
+                {CAT_ICONS[c]} {CAT_LABELS[c]}
               </div>
             ))}
           </div>
-        );
-      })}
+
+          <label style={S.label}>Nom du produit *</label>
+          <input style={S.input} placeholder="Ex : Bœuf Bourguignon" value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
+
+          <label style={S.label}>Description</label>
+          <textarea style={{...S.input,resize:"vertical",minHeight:64}} placeholder="Ingrédients, allergènes, préparation…" value={form.desc||""} onChange={e=>setForm(p=>({...p,desc:e.target.value}))}/>
+
+          <div style={{display:"flex",gap:12}}>
+            <div style={{flex:1}}>
+              <label style={S.label}>Prix (€) *</label>
+              <input style={S.input} type="number" step="0.01" min="0" placeholder="12.90" value={form.price} onChange={e=>setForm(p=>({...p,price:e.target.value}))}/>
+            </div>
+            <div style={{flex:1}}>
+              <label style={S.label}>Points fidélité</label>
+              <input style={S.input} type="number" min="0" placeholder="10" value={form.points||""} onChange={e=>setForm(p=>({...p,points:e.target.value}))}/>
+            </div>
+          </div>
+
+          <label style={S.label}>Disponibilité</label>
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            <div style={{...S.orderTypeBtn,...(form.available?S.orderTypeBtnActive:{}),flex:1,fontSize:13}} onClick={()=>setForm(p=>({...p,available:true}))}>✅ Disponible</div>
+            <div style={{...S.orderTypeBtn,...(!form.available?{...S.orderTypeBtnActive,border:"2px solid #ef4444",color:"#ef4444",background:"#1a0000"}:{}),flex:1,fontSize:13}} onClick={()=>setForm(p=>({...p,available:false}))}>🚫 Indisponible</div>
+          </div>
+
+          <div style={{display:"flex",gap:8}}>
+            <button style={S.btn} onClick={()=>saveItem(form)}>💾 Sauvegarder</button>
+            <button style={S.btnOutline} onClick={()=>setForm(null)}>Annuler</button>
+          </div>
+        </div></div>
+      )}
+
+      {/* Modal confirmation suppression */}
+      {deleteConfirm&&(
+        <div style={S.modal}><div style={{...S.modalCard,maxWidth:380}}>
+          <h3 style={{...S.cardTitle,color:"#ef4444"}}>🗑️ Supprimer ce produit ?</h3>
+          <div style={{background:"#0d1117",borderRadius:10,padding:14,marginBottom:16,border:"1px solid #30363d"}}>
+            <div style={{fontWeight:700,marginBottom:4}}>{deleteConfirm.name}</div>
+            <div style={{fontSize:12,color:"#9ca3af"}}>{CAT_ICONS[deleteConfirm.cat]} {CAT_LABELS[deleteConfirm.cat]} · {fmt(deleteConfirm.price)}</div>
+          </div>
+          <p style={{fontSize:13,color:"#9ca3af",marginBottom:16}}>Cette action est irréversible.</p>
+          <div style={{display:"flex",gap:8}}>
+            <button style={{...S.btn,background:"#7f1d1d",color:"#fca5a5",border:"1px solid #991b1b"}} onClick={()=>del(deleteConfirm.id)}>🗑️ Supprimer définitivement</button>
+            <button style={S.btnOutline} onClick={()=>setDeleteConfirm(null)}>Annuler</button>
+          </div>
+        </div></div>
+      )}
     </div>
   );
 }
@@ -865,7 +1034,7 @@ function AdminSettings({ settings, updateSettings, showToast, currentUser, updat
         <input style={S.input} value={settings.currency} onChange={e=>updateSettings({...settings,currency:e.target.value})}/>
         <button style={{...S.btn,width:"auto"}} onClick={()=>showToast("Sauvegardé ✅")}>Sauvegarder</button>
       </div>
-      <UserSettings currentUser={currentUser} users={users} updateUsers={updateUsers} showToast={showToast} setCurrentUser={setCurrentUser}/>
+      <UserSettings currentUser={currentUser} users={users} updateUsers={updateUsers} showToast={showToast} setCurrentUser={setCurrentUser} logout={logout}/>
     </div>
   );
 }
@@ -891,7 +1060,7 @@ function EmployeeLayout(ctx) {
       {tab==="emp-client-profile" && <ClientProfile {...ctx} clientId={selectedClientId} onBack={()=>setTab("orders")}/>}
       {tab==="menu"     && <EmpMenu    menu={menu} updateMenu={updateMenu} showToast={showToast}/>}
       {tab==="clients"  && <EmpCreateClient users={users} updateUsers={updateUsers} showToast={showToast} setSelectedClientId={setSelectedClientId} setTab={setTab}/>}
-      {tab==="settings" && <div style={S.page}><h1 style={S.pageTitle}>⚙️ Paramètres</h1><UserSettings currentUser={currentUser} users={users} updateUsers={updateUsers} showToast={showToast} setCurrentUser={setCurrentUser}/></div>}
+      {tab==="settings" && <div style={S.page}><h1 style={S.pageTitle}>⚙️ Paramètres</h1><UserSettings currentUser={currentUser} users={users} updateUsers={updateUsers} showToast={showToast} setCurrentUser={setCurrentUser} logout={logout}/></div>}
     </>
   );
   if (isMobile) return (
@@ -1147,7 +1316,7 @@ function ClientLayout(ctx) {
       {page==="client-orders"   && <ClientOrders  {...ctx}/>}
       {page==="client-history"  && <ClientHistory {...ctx}/>}
       {page==="client-loyalty"  && <ClientLoyalty {...ctx}/>}
-      {page==="client-settings" && <div style={S.page}><h1 style={S.pageTitle}>⚙️ Mon compte</h1><UserSettings currentUser={currentUser} users={users} updateUsers={updateUsers} showToast={showToast} setCurrentUser={setCurrentUser}/></div>}
+      {page==="client-settings" && <div style={S.page}><h1 style={S.pageTitle}>⚙️ Mon compte</h1><UserSettings currentUser={currentUser} users={users} updateUsers={updateUsers} showToast={showToast} setCurrentUser={setCurrentUser} logout={logout}/></div>}
     </>
   );
   if (isMobile) return (
@@ -1592,13 +1761,14 @@ function ClientLoyalty({ currentUser, rewards, placeOrder, payOrder, showToast, 
 // ═══════════════════════════════════════════════════════════════════════════════
 // USER SETTINGS (partagé admin / employé / client)
 // ═══════════════════════════════════════════════════════════════════════════════
-function UserSettings({ currentUser, users, updateUsers, showToast, setCurrentUser }) {
+function UserSettings({ currentUser, users, updateUsers, showToast, setCurrentUser, logout }) {
   const [name,    setName]    = useState(currentUser.name    || "");
   const [email,   setEmail]   = useState(currentUser.email   || "");
   const [pwOld,   setPwOld]   = useState("");
   const [pwNew,   setPwNew]   = useState("");
   const [pwConf,  setPwConf]  = useState("");
   const [loading, setLoading] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   const saveProfile = async () => {
     if (!name.trim() || !email.trim()) return showToast("Nom et email requis", "error");
@@ -1684,6 +1854,28 @@ function UserSettings({ currentUser, users, updateUsers, showToast, setCurrentUs
         <button style={{...S.btn,width:"auto",opacity:loading?0.6:1}} onClick={savePassword} disabled={loading}>
           {loading?"⏳ Sauvegarde…":"🔑 Changer le mot de passe"}
         </button>
+      </div>
+
+      {/* Déconnexion */}
+      <div style={S.card}>
+        <h3 style={S.cardTitle}>🚪 Déconnexion</h3>
+        <p style={{fontSize:13,color:"#9ca3af",marginBottom:16}}>
+          Vous serez redirigé vers la page de connexion. Vos données sont sauvegardées.
+        </p>
+        {!confirmLogout
+          ? <button style={{...S.btn,background:"#7f1d1d",color:"#fca5a5",border:"1px solid #991b1b",width:"auto"}} onClick={()=>setConfirmLogout(true)}>
+              🚪 Se déconnecter
+            </button>
+          : <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <span style={{fontSize:13,color:"#fca5a5"}}>Confirmer la déconnexion ?</span>
+              <button style={{...S.btn,background:"#7f1d1d",color:"#fca5a5",border:"1px solid #991b1b",width:"auto"}} onClick={logout}>
+                ✅ Oui, déconnecter
+              </button>
+              <button style={{...S.btnOutline,width:"auto"}} onClick={()=>setConfirmLogout(false)}>
+                Annuler
+              </button>
+            </div>
+        }
       </div>
     </>
   );
