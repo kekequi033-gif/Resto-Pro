@@ -35,7 +35,7 @@ const lsDel = (k) => { try { localStorage.removeItem(k); } catch {} };
 
 
 // ─── PUSH NOTIFICATIONS + SERVICE WORKER ─────────────────────────────────────
-const VAPID_PUBLIC_KEY = "BNZIreiMv4mguUr1oYDnqIiV0dceOotsip_L1m2hsFlaCL9oxYmCZSq2zp3xNUCaItr6y1S9U31isG0mgIG2CbU";
+const VAPID_PUBLIC_KEY = "BAWcp-l7d4VWX-kAjiM0sMWLIwga-WN6Nl3vDROUxe15-_SJKG3Za9LR__x3tmWM4Uc9CoeeZvh1uc1dXXtJpGQ";
 
 // Convertit la clé VAPID base64url en Uint8Array
 const urlBase64ToUint8 = (base64String) => {
