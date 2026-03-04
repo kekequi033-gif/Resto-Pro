@@ -409,29 +409,34 @@ function RegisterPage({setPage,updateUsers,showToast}) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // LAYOUTS
 // ═══════════════════════════════════════════════════════════════════════════════
-function Layout({ctx,tabs,role,mobileTabs,children}) {
+function Layout({ctx,tabs,role,children}) {
   const {logout,page,setPage,orders,messages,currentUser}=ctx;
   const {isMobile,isTablet}=useBreakpoint();
+  const [drawerOpen,setDrawerOpen]=useState(false);
   const activeOrders=orders.filter(o=>o.status!=="done").length;
   const unreadMsg=messages.filter(m=>role==="admin"?!m.readByAdmin:!m.readByClient&&m.clientId===currentUser?.id).length;
 
   const badgeFor=(id)=>{
     if((id==="admin-orders"||id==="emp-orders")&&activeOrders>0) return activeOrders;
-    if((id==="admin-messages")&&unreadMsg>0) return unreadMsg;
+    if((id==="admin-messages"||id==="emp-messages")&&unreadMsg>0) return unreadMsg;
     if(id==="client-messages"&&unreadMsg>0) return unreadMsg;
     return 0;
   };
 
   if(isMobile) return (
-    <div style={{...S.app,height:"100dvh",display:"flex",flexDirection:"column"}}>
-      <div style={{background:"#161b22",borderBottom:"1px solid #30363d",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+    <div style={{...S.app,height:"100dvh",display:"flex",flexDirection:"column",position:"relative"}}>
+      {/* Header mobile */}
+      <div style={{background:"#161b22",borderBottom:"1px solid #30363d",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0,position:"relative",zIndex:200}}>
+        <button style={{background:"none",border:"none",cursor:"pointer",padding:"6px",display:"flex",flexDirection:"column",gap:5,WebkitTapHighlightColor:"transparent",position:"relative"}} onClick={()=>setDrawerOpen(true)}>
+          <span style={{display:"block",width:24,height:2,background:"#d4a853",borderRadius:2}}/>
+          <span style={{display:"block",width:24,height:2,background:"#d4a853",borderRadius:2}}/>
+          <span style={{display:"block",width:24,height:2,background:"#d4a853",borderRadius:2}}/>
+          {(activeOrders>0||unreadMsg>0)&&<span style={{position:"absolute",top:4,right:2,background:"#ef4444",width:8,height:8,borderRadius:"50%",display:"block"}}/>}
+        </button>
         <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,color:"#d4a853"}}>🍽️ RestoPro</div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           {role==="client"&&<span style={{fontSize:12,color:"#d4a853",fontWeight:700}}>⭐ {currentUser?.points||0}</span>}
-          <span style={{fontSize:11,background:role==="admin"?"#d4a853":role==="employee"?"#374151":"#1f2937",color:role==="admin"?"#0d1117":"#d1d5db",padding:"3px 10px",borderRadius:20,fontWeight:700}}>
-            {role==="admin"?"👑 Patron":role==="employee"?"👨‍🍳 Employé":"👤 "+currentUser?.name?.split(" ")[0]}
-          </span>
-          <button style={{background:"#7f1d1d",color:"#fca5a5",border:"1px solid #991b1b",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}} onClick={logout}>🚪</button>
+          <button style={{background:"#7f1d1d",color:"#fca5a5",border:"1px solid #991b1b",borderRadius:6,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:700}} onClick={logout}>🚪</button>
         </div>
       </div>
       {role==="client"&&"Notification" in window&&Notification.permission==="default"&&(
@@ -440,16 +445,39 @@ function Layout({ctx,tabs,role,mobileTabs,children}) {
           <button style={{...S.btnSm,background:"#d4a853",color:"#0d1117",border:"none",fontWeight:700,fontSize:11}} onClick={()=>registerPush(currentUser.id)}>Activer</button>
         </div>
       )}
-      <div style={{flex:1,overflowY:"auto",paddingBottom:72}}>{children}</div>
-      <nav className="bottom-nav"><div className="bottom-nav-inner">
-        {(mobileTabs||tabs).map(t=>{const b=badgeFor(t.id);return(
-          <div key={t.id} className={`bottom-nav-item${page===t.id?" active":""}`} onClick={()=>setPage(t.id)}>
-            <span className="nav-icon">{t.icon}</span>
-            <span style={{fontSize:9}}>{t.short||t.label.split(" ")[0]}</span>
-            {b>0&&<span className="bottom-nav-badge">{b}</span>}
+      {/* Contenu */}
+      <div style={{flex:1,overflowY:"auto"}}>{children}</div>
+      {/* Overlay */}
+      {drawerOpen&&<div style={{position:"fixed",inset:0,zIndex:9998,background:"rgba(0,0,0,0.65)"}} onClick={()=>setDrawerOpen(false)}/>}
+      {/* Drawer */}
+      <div style={{position:"fixed",top:0,left:0,bottom:0,width:280,background:"#161b22",borderRight:"1px solid #30363d",zIndex:9999,transform:drawerOpen?"translateX(0)":"translateX(-100%)",transition:"transform .25s ease",display:"flex",flexDirection:"column",paddingBottom:"env(safe-area-inset-bottom)"}}>
+        <div style={{padding:"16px 20px",borderBottom:"1px solid #30363d",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+          <div>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,color:"#d4a853"}}>🍽️ RestoPro</div>
+            <div style={{fontSize:12,color:role==="admin"?"#d4a853":role==="employee"?"#9ca3af":"#9ca3af",marginTop:3,fontWeight:600}}>
+              {role==="admin"?"👑 Patron":role==="employee"?"👨‍🍳 Employé":"👤 "+currentUser?.name}
+            </div>
+            {role==="client"&&currentUser?.refNumber&&<div style={{fontSize:11,color:"#d4a853",marginTop:2,fontWeight:700,letterSpacing:1}}>{currentUser.refNumber}</div>}
+            {role==="client"&&<div style={{fontSize:11,color:"#9ca3af",marginTop:1}}>⭐ {currentUser?.points||0} points</div>}
           </div>
-        );})}
-      </div></nav>
+          <button style={{background:"none",border:"none",color:"#9ca3af",fontSize:24,cursor:"pointer",padding:"4px",lineHeight:1}} onClick={()=>setDrawerOpen(false)}>✕</button>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:"6px 0"}}>
+          {tabs.map(t=>{const b=badgeFor(t.id);const active=page===t.id;return(
+            <div key={t.id} style={{display:"flex",alignItems:"center",gap:14,padding:"14px 20px",cursor:"pointer",background:active?"#1f2937":"transparent",color:active?"#d4a853":"#d1d5db",borderLeft:active?"3px solid #d4a853":"3px solid transparent",transition:"all .15s",WebkitTapHighlightColor:"transparent"}} onClick={()=>{setPage(t.id);setDrawerOpen(false);}}>
+              <span style={{fontSize:20,flexShrink:0}}>{t.icon}</span>
+              <span style={{fontSize:15,fontWeight:active?700:400,flex:1}}>{t.label}</span>
+              {b>0&&<span style={{background:"#d4a853",color:"#0d1117",borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:800,minWidth:20,textAlign:"center"}}>{b}</span>}
+            </div>
+          );})}
+        </div>
+        <div style={{padding:"12px 16px",borderTop:"1px solid #30363d",flexShrink:0}}>
+          {role==="client"&&"Notification" in window&&Notification.permission==="default"&&(
+            <button style={{...S.btnSm,width:"100%",marginBottom:10,background:"#d4a853",color:"#0d1117",border:"none",fontWeight:700,padding:"10px"}} onClick={()=>{registerPush(currentUser.id);setDrawerOpen(false);}}>🔔 Activer les notifications</button>
+          )}
+          <button style={{...S.btn,background:"#7f1d1d",color:"#fca5a5",border:"1px solid #991b1b",display:"flex",alignItems:"center",justifyContent:"center",gap:8}} onClick={logout}>🚪 Se déconnecter</button>
+        </div>
+      </div>
     </div>
   );
   return (
@@ -493,9 +521,8 @@ function AdminLayout(ctx) {
     {id:"admin-settings",icon:"⚙️",label:"Paramètres",short:"Params"},
     {id:"admin-reviews", icon:"⭐",label:"Avis",short:"Avis"},
   ];
-  const mobileTabs=[tabs[0],tabs[1],tabs[4],tabs[5],tabs[6]];
   return (
-    <Layout ctx={ctx} tabs={tabs} mobileTabs={mobileTabs} role="admin">
+    <Layout ctx={ctx} tabs={tabs} role="admin">
       {page==="admin-dash"         && <AdminDash        {...ctx}/>}
       {page==="admin-orders"       && <OrdersView       {...ctx} role="admin"/>}
       {page==="admin-products"     && <AdminProducts    {...ctx}/>}
@@ -513,19 +540,23 @@ function AdminLayout(ctx) {
 function EmployeeLayout(ctx) {
   const {page}=ctx;
   const tabs=[
-    {id:"emp-orders",  icon:"📋",label:"Commandes",short:"Cmdes"},
-    {id:"emp-cashier", icon:"🧾",label:"Encaissement",short:"Caisse"},
-    {id:"emp-clients", icon:"👥",label:"Clients",short:"Clients"},
-    {id:"emp-settings",icon:"⚙️",label:"Compte",short:"Compte"},
-    {id:"emp-reviews", icon:"⭐",label:"Avis",short:"Avis"},
+    {id:"emp-orders",       icon:"📋",label:"Commandes"},
+    {id:"emp-cashier",      icon:"🧾",label:"Encaissement"},
+    {id:"emp-reservations", icon:"📅",label:"Réservations"},
+    {id:"emp-clients",      icon:"👥",label:"Clients"},
+    {id:"emp-messages",     icon:"💬",label:"Messagerie"},
+    {id:"emp-reviews",      icon:"⭐",label:"Avis"},
+    {id:"emp-settings",     icon:"⚙️",label:"Compte"},
   ];
   return (
     <Layout ctx={ctx} tabs={tabs} role="employee">
-      {page==="emp-orders"   && <OrdersView  {...ctx} role="employee"/>}
-      {page==="emp-cashier"  && <CashierPage {...ctx}/>}
-      {page==="emp-clients"  && <EmpClients  {...ctx}/>}
-      {page==="emp-settings" && <div style={S.page}><h1 style={S.pageTitle}>⚙️ Mon compte</h1><UserSettings {...ctx}/></div>}
-      {page==="emp-reviews"  && <ReviewsPage {...ctx}/>}
+      {page==="emp-orders"       && <OrdersView       {...ctx} role="employee"/>}
+      {page==="emp-cashier"      && <CashierPage      {...ctx}/>}
+      {page==="emp-reservations" && <ReservationsAdmin {...ctx}/>}
+      {page==="emp-clients"      && <EmpClients        {...ctx}/>}
+      {page==="emp-messages"     && <MessagesPage      {...ctx} role="admin"/>}
+      {page==="emp-reviews"      && <ReviewsPage       {...ctx}/>}
+      {page==="emp-settings"     && <div style={S.page}><h1 style={S.pageTitle}>⚙️ Mon compte</h1><UserSettings {...ctx}/></div>}
     </Layout>
   );
 }
@@ -544,10 +575,9 @@ function ClientLayout(ctx) {
     {id:"client-settings",    icon:"⚙️",label:"Compte",short:"Compte"},
     {id:"client-reviews",     icon:"⭐",label:"Avis",short:"Avis"},
   ];
-  const mobileTabs=[tabs[0],tabs[1],tabs[4],tabs[5],tabs[8]];
   const [cart,setCart]=useState([]);
   return (
-    <Layout ctx={ctx} tabs={tabs} mobileTabs={mobileTabs} role="client">
+    <Layout ctx={ctx} tabs={tabs} role="client">
       {page==="client-menu"         && <ClientMenu        {...ctx} cart={cart} setCart={setCart}/>}
       {page==="client-orders"       && <ClientOrders      {...ctx}/>}
       {page==="client-history"      && <ClientHistory     {...ctx}/>}
@@ -873,29 +903,41 @@ function MessagesPage({messages,updateMessages,currentUser,users,showToast,role}
     </div>
   );
 
+  const closeConversation=async(clientId)=>{
+    const updated=messages.map(m=>m.clientId===clientId?{...m,closed:true}:m);
+    await updateMessages(updated);
+    setSelected(null);
+    showToast("Conversation clôturée");
+  };
+
   // Admin : conversation sélectionnée
   if(isAdmin&&selected) {
     const thread=messages.filter(m=>m.clientId===selected.clientId).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+    const isClosed=thread.length>0&&thread[thread.length-1].closed;
     return (
       <div style={S.page}>
-        <button style={{...S.btnOutline,width:"auto",marginBottom:16}} onClick={()=>setSelected(null)}>← Retour</button>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}}>
+          <button style={{...S.btnOutline,width:"auto"}} onClick={()=>setSelected(null)}>← Retour</button>
+          <button style={{...S.btnSm,background:"#7f1d1d",color:"#fca5a5",border:"1px solid #991b1b"}} onClick={()=>closeConversation(selected.clientId)}>🔒 Clore la conversation</button>
+        </div>
         <h2 style={{...S.pageTitle,fontSize:18}}>💬 {selected.clientName}</h2>
+        {isClosed&&<div style={{background:"#1a1a1a",border:"1px solid #374151",borderRadius:8,padding:"8px 14px",marginBottom:12,fontSize:12,color:"#6b7280",textAlign:"center"}}>🔒 Cette conversation a été clôturée</div>}
         <div style={{...S.card,maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:10}}>
           {thread.map(m=>(
             <div key={m.id} style={{display:"flex",justifyContent:m.fromAdmin?"flex-end":"flex-start"}}>
               <div style={{maxWidth:"80%",background:m.fromAdmin?"#1a3a1a":"#1f2937",border:`1px solid ${m.fromAdmin?"#166534":"#374151"}`,borderRadius:12,padding:"10px 14px"}}>
-                <div style={{fontSize:10,color:m.fromAdmin?"#86efac":"#d4a853",fontWeight:700,marginBottom:4}}>{m.fromAdmin?"Vous (Patron)":m.clientName} · {m.motif}</div>
+                <div style={{fontSize:10,color:m.fromAdmin?"#86efac":"#d4a853",fontWeight:700,marginBottom:4}}>{m.fromAdmin?"Vous":m.clientName} · {m.motif}</div>
                 <div style={{fontSize:14,lineHeight:1.5}}>{m.text}</div>
                 <div style={{fontSize:10,color:"#6b7280",marginTop:4,textAlign:"right"}}>{fmtDate(m.createdAt)}</div>
               </div>
             </div>
           ))}
         </div>
-        <div style={{...S.card,marginTop:0}}>
+        {!isClosed&&<div style={{...S.card,marginTop:0}}>
           <label style={S.label}>Votre réponse</label>
           <textarea style={{...S.input,resize:"vertical",minHeight:80}} placeholder="Tapez votre réponse…" value={reply} onChange={e=>setReply(e.target.value)}/>
           <button style={{...S.btn,width:"auto",opacity:sending?0.6:1}} onClick={sendReply} disabled={sending}>{sending?"⏳…":"📤 Envoyer"}</button>
-        </div>
+        </div>}
       </div>
     );
   }
@@ -917,6 +959,14 @@ function MessagesPage({messages,updateMessages,currentUser,users,showToast,role}
             </div>
           ))}
         </div>
+      )}
+      {myThread.length>0&&!myThread[myThread.length-1]?.closed&&(
+        <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+          <button style={{...S.btnSm,background:"#7f1d1d",color:"#fca5a5",border:"1px solid #991b1b"}} onClick={async()=>{const updated=messages.map(m=>m.clientId===currentUser.id?{...m,closed:true}:m);await updateMessages(updated);showToast("Conversation clôturée");}}>🔒 Clore la conversation</button>
+        </div>
+      )}
+      {myThread.length>0&&myThread[myThread.length-1]?.closed&&(
+        <div style={{background:"#1a1a1a",border:"1px solid #374151",borderRadius:8,padding:"8px 14px",marginBottom:12,fontSize:12,color:"#6b7280",textAlign:"center"}}>🔒 Conversation clôturée — envoyez un nouveau message pour la rouvrir</div>
       )}
       <div style={S.card}>
         <h3 style={S.cardTitle}>✉️ Nouveau message</h3>
@@ -1276,13 +1326,13 @@ RÈGLES IMPORTANTES :
     setMsgs(newMsgs);setInput("");setLoading(true);
     try {
       const apiMessages=newMsgs.filter(m=>m.role!=="system").map(m=>({role:m.role==="assistant"?"assistant":"user",content:m.text}));
-      const res=await fetch("https://api.anthropic.com/v1/messages",{
+      const res=await fetch("/api/chat",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:500,system:systemPrompt,messages:apiMessages})
+        body:JSON.stringify({system:systemPrompt,messages:apiMessages})
       });
       const data=await res.json();
-      const reply=data.content?.[0]?.text||"Désolé, je n'ai pas pu répondre.";
+      const reply=data.text||"Désolé, je n'ai pas pu répondre.";
       setMsgs(p=>[...p,{role:"assistant",text:reply}]);
     } catch(e) {
       setMsgs(p=>[...p,{role:"assistant",text:"Désolé, une erreur s'est produite. Réessayez."}]);
@@ -1406,7 +1456,23 @@ function AdminClients({users,updateUsers,invoices,orders,showToast}) {
     if(existing.find(u=>u.email.toLowerCase()===c.email.toLowerCase()&&u.id!==c.id)) return showToast("Email déjà utilisé","error");
     let nu;
     if(c.id){const pw=c._newPw?await hashPw(c._newPw):c.password;const{_newPw,...clean}=c;nu=existing.map(u=>u.id===c.id?{...clean,password:pw}:u);}
-    else{const h=await hashPw(c.password||"client123");nu=[...existing,{...c,id:genId(),role:"client",points:c.points||0,refNumber:c.refNumber||genRef(),password:h,createdAt:new Date().toISOString()}];}
+    else{
+      const h=await hashPw(c.password||"client123");
+      const newRef=c.refNumber||genRef();
+      const newId=genId();
+      const newU={...c,id:newId,role:"client",points:c.points||0,refNumber:newRef,password:h,createdAt:new Date().toISOString()};
+      nu=[...existing,newU];
+      // Message de bienvenue
+      const freshMsgs=await dbGet("messages")||[];
+      const welcomeMsg={id:genId(),clientId:newId,clientName:c.name,motif:"Bienvenue",text:`Bonjour ${c.name} ! 👋 Votre compte RestoPro vient d'être créé par notre équipe.
+
+🔑 Pour votre sécurité, modifiez votre mot de passe dès maintenant dans ⚙️ Mon compte → Changer le mot de passe.
+
+Votre numéro de référence fidélité : ${newRef}
+
+Bienvenue !`,createdAt:new Date().toISOString(),fromAdmin:true,readByAdmin:true,readByClient:false};
+      await dbSet("messages",[...freshMsgs,welcomeMsg]);
+    }
     await updateUsers(nu);setForm(null);showToast("Client sauvegardé ✅");
   };
   const delClient=async(id)=>{const e=await dbGet("users")||[];await updateUsers(e.filter(u=>u.id!==id));setDelConfirm(null);if(selected?.id===id)setSelected(null);showToast("Client supprimé");};
@@ -1600,7 +1666,18 @@ function EmpClients({users,updateUsers,showToast}) {
     if(existing.find(u=>u.email.toLowerCase()===email.toLowerCase())){setLoading(false);return showToast("Email déjà utilisé","error");}
     const hashed=await hashPw(pw);
     const ref=genRef();
-    await updateUsers([...existing,{id:genId(),role:"client",name:name.trim(),email:email.trim(),password:hashed,points:0,refNumber:ref,createdAt:new Date().toISOString()}]);
+    const newUser={id:genId(),role:"client",name:name.trim(),email:email.trim(),password:hashed,points:0,refNumber:ref,createdAt:new Date().toISOString()};
+    await updateUsers([...existing,newUser]);
+    // Message automatique de bienvenue
+    const freshMsgs=await dbGet("messages")||[];
+    const welcomeMsg={id:genId(),clientId:newUser.id,clientName:newUser.name,motif:"Bienvenue",text:`Bonjour ${name.trim()} ! 👋 Votre compte RestoPro vient d'être créé.
+
+🔑 Votre mot de passe temporaire a été défini par notre équipe. Pour votre sécurité, nous vous invitons à le modifier dès maintenant dans ⚙️ Mon compte → Changer le mot de passe.
+
+Votre numéro de référence fidélité : ${ref}
+
+Bienvenue parmi nous !`,createdAt:new Date().toISOString(),fromAdmin:true,readByAdmin:true,readByClient:false};
+    await dbSet("messages",[...freshMsgs,welcomeMsg]);
     setLastRef(ref);setName("");setEmail("");setPw("");setLoading(false);showToast(`Compte créé ! Réf : ${ref} ✅`);
   };
   return(
