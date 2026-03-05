@@ -1553,12 +1553,9 @@ Email : ${settings.email||"—"}`;
     if(has("réservation","réserver","reserver","table","place","dispo")){
       const myRes=reservations.filter(r=>r.clientId===currentUser.id&&r.status!=="cancelled");
       const upcoming=myRes.filter(r=>new Date(r.date)>=new Date());
-      let reply="📅 **Réservations :**
-Pour réserver une table, rendez-vous dans l'onglet **📅 Réserver** de l'application.";
+      let reply="📅 **Réservations :**\nPour réserver une table, rendez-vous dans l'onglet **📅 Réserver** de l'application.";
       if(upcoming.length>0){
-        reply+="
-
-**Vos réservations à venir :**";
+        reply+="\n\n**Vos réservations à venir :**";
         upcoming.forEach(r=>{reply+=`
 • ${fmtDateOnly(r.date)} à ${r.time} — Table ${r.tableNumber} — ${r.guests} pers. (${r.status==="confirmed"?"✅ Confirmée":"⏳ En attente"})`;});
       }
@@ -1570,8 +1567,7 @@ Pour réserver une table, rendez-vous dans l'onglet **📅 Réserver** de l'appl
       const cats=["entree","plat","dessert","boisson","menu"];
       const available=menu.filter(m=>m.available);
       if(available.length===0) return "Le menu n'est pas encore disponible. Revenez bientôt !";
-      let reply="🍽️ **Notre menu :**
-";
+      let reply="🍽️ **Notre menu :**\n";
       cats.forEach(cat=>{
         const items=available.filter(m=>m.cat===cat);
         if(items.length===0) return;
@@ -1588,36 +1584,28 @@ Pour réserver une table, rendez-vous dans l'onglet **📅 Réserver** de l'appl
     if(has("entrée","salade","soupe","starter")){
       const items=menu.filter(m=>m.cat==="entree"&&m.available);
       if(!items.length) return "Pas d'entrées disponibles pour le moment.";
-      return "🥗 **Nos entrées :**
-"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("
-");
+      return "🥗 **Nos entrées :**\n"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("\n");
     }
 
     // Plats
     if(has("plat","principal","main","viande","poisson","risotto")){
       const items=menu.filter(m=>m.cat==="plat"&&m.available);
       if(!items.length) return "Pas de plats disponibles pour le moment.";
-      return "🍽️ **Nos plats :**
-"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("
-");
+      return "🍽️ **Nos plats :**\n"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("\n");
     }
 
     // Desserts
     if(has("dessert","sucré","gâteau","glace","fondant","crème")){
       const items=menu.filter(m=>m.cat==="dessert"&&m.available);
       if(!items.length) return "Pas de desserts disponibles pour le moment.";
-      return "🍮 **Nos desserts :**
-"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("
-");
+      return "🍮 **Nos desserts :**\n"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("\n");
     }
 
     // Boissons
     if(has("boisson","boire","eau","vin","jus","verre","alcool")){
       const items=menu.filter(m=>m.cat==="boisson"&&m.available);
       if(!items.length) return "Pas de boissons disponibles pour le moment.";
-      return "🥤 **Nos boissons :**
-"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("
-");
+      return "🥤 **Nos boissons :**\n"+items.map(i=>`• ${i.name}${i.desc?" — "+i.desc:""} — ${fmt(i.price)}`).join("\n");
     }
 
     // Fidélité / points
@@ -1631,11 +1619,7 @@ Consultez vos récompenses disponibles dans l'onglet **⭐ Fidélité**.`;
 
     // Commande / commander
     if(has("commander","commande","passer commande","comment commander")){
-      return "📋 **Comment commander :**
-1. Allez dans l'onglet **🍽️ Menu**
-2. Ajoutez vos articles au panier
-3. Choisissez Sur place ou À emporter
-4. Confirmez et réglez au comptoir";
+      return "📋 **Comment commander :**\n1. Allez dans l'onglet **🍽️ Menu**\n2. Ajoutez vos articles au panier\n3. Choisissez Sur place ou À emporter\n4. Confirmez et réglez au comptoir";
     }
 
     // Avis / notes
@@ -1651,11 +1635,7 @@ Consultez tous les avis dans l'onglet **⭐ Avis**.`
 
     // Paiement
     if(has("paiement","payer","carte","espèces","cb","cash","moyen de paiement")){
-      return "💳 **Modes de paiement acceptés :**
-• Carte bancaire (CB, Visa, Mastercard)
-• Espèces
-
-Le règlement se fait au comptoir.";
+      return "💳 **Modes de paiement acceptés :**\n• Carte bancaire (CB, Visa, Mastercard)\n• Espèces\n\nLe règlement se fait au comptoir.";
     }
 
     // Allergie / régime
