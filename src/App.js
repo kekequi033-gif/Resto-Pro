@@ -487,7 +487,7 @@ function RegisterPage({setPage,updateUsers,showToast}) {
     const existing=await dbGet("users")||[];
     if(existing.find(u=>u.email.toLowerCase()===email.toLowerCase())){setLoading(false);return showToast("Email déjà utilisé","error");}
     const hashed=await hashPw(pw);
-    await updateUsers([...existing,{id:genId(),role:"client",name:name.trim(),email:email.trim(),password:hashed,points:0,refNumber:genRef(),createdAt:new Date().toISOString()}]);
+    await updateUsers([...existing,{id:genId(),role:"client",name:name.trim(),email:email.trim(),password:hashed,points:10,refNumber:genRef(),createdAt:new Date().toISOString()}]);
     setLoading(false); showToast("Compte créé ! Connectez-vous ✅"); setPage("login");
   };
   return (
@@ -515,7 +515,7 @@ function Layout({ctx,tabs,role,children}) {
   const {isMobile,isTablet}=useBreakpoint();
   const [drawerOpen,setDrawerOpen]=useState(false);
   const activeOrders=orders.filter(o=>o.status!=="done").length;
-  const unreadMsg=messages.filter(m=>role==="admin"?!m.readByAdmin:!m.readByClient&&m.clientId===currentUser?.id).length;
+  const unreadMsg=messages.filter(m=>!m.closed&&(role==="admin"?!m.readByAdmin:!m.readByClient&&m.clientId===currentUser?.id)).length;
 
   const badgeFor=(id)=>{
     if((id==="admin-orders"||id==="emp-orders")&&activeOrders>0) return activeOrders;
@@ -1835,7 +1835,7 @@ function AdminClients({users,updateUsers,invoices,orders,showToast}) {
       const h=await hashPw(c.password||"client123");
       const newRef=c.refNumber||genRef();
       const newId=genId();
-      const newU={...c,id:newId,role:"client",points:c.points||0,refNumber:newRef,password:h,createdAt:new Date().toISOString(),mustChangePassword:true};
+      const newU={...c,id:newId,role:"client",points:c.points||10,refNumber:newRef,password:h,createdAt:new Date().toISOString(),mustChangePassword:true};
       nu=[...existing,newU];
       // Message de bienvenue
       const freshMsgs=await dbGet("messages")||[];
@@ -1876,7 +1876,7 @@ Bienvenue !`,createdAt:new Date().toISOString(),fromAdmin:true,readByAdmin:true,
     <div style={S.page}>
       <div style={{...S.pageHeader,flexWrap:"wrap",gap:8}}>
         <h1 style={S.pageTitle}>👥 Clients ({clients.length})</h1>
-        <button style={{...S.btn,width:"auto"}} onClick={()=>setForm({role:"client",name:"",email:"",password:"client123",points:0,refNumber:genRef()})}>＋ Nouveau</button>
+        <button style={{...S.btn,width:"auto"}} onClick={()=>setForm({role:"client",name:"",email:"",password:"client123",points:10,refNumber:genRef()})}>＋ Nouveau</button>
       </div>
       <input style={S.input} placeholder="🔍 Nom, email ou REF…" value={search} onChange={e=>setSearch(e.target.value)}/>
       {filtered.map(c=>(
@@ -2151,7 +2151,7 @@ function EmpClients({users,updateUsers,showToast}) {
     if(existing.find(u=>u.email.toLowerCase()===email.toLowerCase())){setLoading(false);return showToast("Email déjà utilisé","error");}
     const hashed=await hashPw(pw);
     const ref=genRef();
-    const newUser={id:genId(),role:"client",name:name.trim(),email:email.trim(),password:hashed,points:0,refNumber:ref,createdAt:new Date().toISOString(),mustChangePassword:true};
+    const newUser={id:genId(),role:"client",name:name.trim(),email:email.trim(),password:hashed,points:10,refNumber:ref,createdAt:new Date().toISOString(),mustChangePassword:true};
     await updateUsers([...existing,newUser]);
     // Message automatique de bienvenue
     const freshMsgs=await dbGet("messages")||[];
