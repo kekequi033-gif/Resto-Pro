@@ -8,12 +8,12 @@ import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "firebase/firestor
 // FIREBASE
 // ═══════════════════════════════════════════════════════════════════════════════
 const firebaseConfig = {
-  apiKey: "AIzaSyDK--DuLNxgRtwc6jj1DNcfRgwsRTgVO_Q",
-  authDomain: "mon-resto-3719e.firebaseapp.com",
-  projectId: "mon-resto-3719e",
-  storageBucket: "mon-resto-3719e.firebasestorage.app",
-  messagingSenderId: "98022114260",
-  appId: "1:98022114260:web:1ce8bacf850344048d4c41",
+  apiKey:            process.env.REACT_APP_FB_API_KEY,
+  authDomain:        process.env.REACT_APP_FB_AUTH_DOMAIN,
+  projectId:         process.env.REACT_APP_FB_PROJECT_ID,
+  storageBucket:     process.env.REACT_APP_FB_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FB_MESSAGING_SENDER_ID,
+  appId:             process.env.REACT_APP_FB_APP_ID,
 };
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
@@ -89,7 +89,7 @@ const STATUS_CFG = {
   ready:  {label:"Prête",         color:"#22c55e",icon:"✅"},
   done:   {label:"Terminée",      color:"#6b7280",icon:"⚫"},
 };
-const PAY_MODES = {cb:"💳 Carte bancaire",cash:"💵 Espèces",mixed:"💳+💵 Mixte"};
+const PAY_MODES = {cb:"💳 Carte bancaire",cash:"💵 Espèces",mixed:"💳+💵 Mixte",drive:"🚗 Drive"};
 const STARS = [1,2,3,4,5];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -117,7 +117,15 @@ const SEED_SETTINGS = {
   pointsPerEuro:1,currency:"€",
   restaurantName:"RestoPro",address:"12 rue de la Gastronomie, 75001 Paris",
   phone:"01 23 45 67 89",email:"contact@restopro.fr",siret:"123 456 789 00012",
-  hours:"Lun-Sam 12h-14h30 / 19h-22h30",tableCount:10,tableCapacity:4,
+  hours:{
+    lundi:"10:00-00:00",mardi:"10:00-00:00",mercredi:"10:00-00:00",
+    jeudi:"10:00-00:00",vendredi:"10:00-00:00",
+    samedi:"09:30-00:00",dimanche:"Fermé"
+  },
+  tableCount:10,tableCapacity:4,
+  seoDescription:"Restaurant gastronomique au cœur de Paris. Menu fait maison, produits frais.",
+  seoKeywords:"restaurant paris, cuisine française, réservation en ligne",
+  googleMapsUrl:"",
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -139,7 +147,7 @@ const printTicket = (inv,settings,cashierName) => {
   <hr class="sep"/>
   <div class="row"><span>Date :</span><span>${fmtDate(inv.paidAt)}</span></div>
   <div class="row"><span>Caissier :</span><span>${cashierName||"—"}</span></div>
-  <div class="row"><span>Facture :</span><span>#${inv.id.slice(0,8).toUpperCase()}</span></div>
+  <div class="row"><span>Facture :</span><span>${inv.invoiceNum||'#'+inv.id.slice(0,8).toUpperCase()}</span></div>
   ${inv.clientName&&inv.clientName!=="Anonyme"?`<div class="row"><span>Client :</span><span>${inv.clientName}</span></div>`:""}
   ${inv.refNumber?`<div class="row"><span>Réf :</span><span>${inv.refNumber}</span></div>`:""}
   <div class="row"><span>Mode :</span><span>${inv.orderType==="surplace"?`Table ${inv.tableNumber}`:"À emporter"}</span></div>
@@ -261,8 +269,12 @@ export default function App() {
     }
     setCurrentUser(candidate);
     if(remember) lsSet("rm:sess",{id:candidate.id}); else lsDel("rm:sess");
-    setPage(candidate.role==="admin"?"admin-dash":candidate.role==="employee"?"emp-orders":"client-menu");
-    showToast(`Bienvenue ${candidate.name} !`);
+    if(candidate.mustChangePassword){
+      setPage("force-change-password");
+    } else {
+      setPage(candidate.role==="admin"?"admin-dash":candidate.role==="employee"?"emp-orders":"client-menu");
+      showToast(`Bienvenue ${candidate.name} !`);
+    }
     if(candidate.role==="client") registerPush(candidate.id);
   };
   const logout=()=>{setCurrentUser(null);setPage("login");lsDel("rm:sess");};
@@ -292,6 +304,11 @@ export default function App() {
     return order;
   };
 
+  const genInvoiceNum=(payMode)=>{
+    const prefix=payMode==="cash"?"ESP":payMode==="cb"?"CB":"MIX";
+    const num=Math.floor(Math.random()*900000)+100000;
+    return `${prefix}${num}`;
+  };
   const payOrder=async(order,payMode="cb",cardLast4="",cardType="VISA")=>{
     if(!order) return;
     const freshInv=await dbGet("invoices")||[];
@@ -299,7 +316,8 @@ export default function App() {
     const freshUsers=await dbGet("users")||[];
     const client=freshUsers.find(u=>u.id===order.clientId);
     const invoice={
-      id:genId(),orderId:order.id,clientId:order.clientId,clientName:order.clientName||"Anonyme",
+      id:genId(),invoiceNum:genInvoiceNum(payMode),
+      orderId:order.id,clientId:order.clientId,clientName:order.clientName||"Anonyme",
       refNumber:client?.refNumber||null,items:order.items,total:order.total,
       paidAt:new Date().toISOString(),orderType:order.orderType,tableNumber:order.tableNumber,
       rewardUsed:order.rewardUsed||null,payMode,cardLast4,cardType,
@@ -345,9 +363,11 @@ export default function App() {
       {toast&&<div style={{...S.toast,background:toast.type==="error"?"#dc2626":"#166534"}}>{toast.msg}</div>}
       {!currentUser&&page==="login"    && <LoginPage    {...ctx}/>}
       {!currentUser&&page==="register" && <RegisterPage {...ctx}/>}
-      {currentUser?.role==="admin"     && <AdminLayout    {...ctx}/>}
-      {currentUser?.role==="employee"  && <EmployeeLayout {...ctx}/>}
-      {currentUser?.role==="client"    && <ClientLayout   {...ctx}/>}
+      {currentUser&&page==="force-change-password" && <ForceChangePassword {...ctx}/>}
+      {currentUser?.role==="admin"     && page!=="force-change-password" && <AdminLayout    {...ctx}/>}
+      {currentUser?.role==="employee"  && page!=="force-change-password" && <EmployeeLayout {...ctx}/>}
+      {currentUser?.role==="client"    && page!=="force-change-password" && <ClientLayout   {...ctx}/>}
+      {!currentUser&&page!=="login"&&page!=="register" && <Page404 setPage={setPage}/>}
     </div>
   );
 }
@@ -356,6 +376,87 @@ export default function App() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // AUTH
 // ═══════════════════════════════════════════════════════════════════════════════
+function ForceChangePassword({currentUser,updateUsers,users,setCurrentUser,setPage,showToast,logout}) {
+  const [pwNew,setPwNew]=useState("");
+  const [pwConf,setPwConf]=useState("");
+  const [loading,setLoading]=useState(false);
+
+  const save=async()=>{
+    if(!pwNew||!pwConf) return showToast("Remplissez les deux champs","error");
+    if(pwNew.length<6) return showToast("Minimum 6 caractères","error");
+    if(pwNew!==pwConf) return showToast("Les mots de passe ne correspondent pas","error");
+    setLoading(true);
+    const fresh=await dbGet("users")||[];
+    const hashed=await hashPw(pwNew);
+    const updated={...currentUser,password:hashed,mustChangePassword:false};
+    await updateUsers(fresh.map(u=>u.id===currentUser.id?updated:u));
+    setCurrentUser(updated);
+    setPage(currentUser.role==="admin"?"admin-dash":currentUser.role==="employee"?"emp-orders":"client-menu");
+    setLoading(false);
+    showToast("Mot de passe mis à jour ! Bienvenue 🎉");
+  };
+
+  return (
+    <div style={S.authPage}>
+      <div style={{...S.authCard,maxWidth:440}} className="auth-card-mobile">
+        <div style={{textAlign:"center",marginBottom:20}}>
+          <div style={{fontSize:48,marginBottom:8}}>🔑</div>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:22,color:"#d4a853",marginBottom:6}}>Bienvenue, {currentUser.name} !</div>
+          <p style={{fontSize:14,color:"#9ca3af",lineHeight:1.6}}>
+            Votre compte a été créé par notre équipe.<br/>
+            Pour votre sécurité, choisissez un nouveau mot de passe avant de continuer.
+          </p>
+        </div>
+        <div style={{background:"#1c1a00",border:"1px solid #d4a853",borderRadius:10,padding:12,marginBottom:20,fontSize:13,color:"#fde68a",lineHeight:1.6}}>
+          🔒 Cette étape est obligatoire. Votre mot de passe temporaire ne fonctionnera plus après ce changement.
+        </div>
+        <label style={S.label}>Nouveau mot de passe</label>
+        <input style={S.input} type="password" placeholder="Minimum 6 caractères" value={pwNew} onChange={e=>setPwNew(e.target.value)} autoFocus/>
+        <label style={S.label}>Confirmer le mot de passe</label>
+        <input style={{...S.input,marginBottom:10}} type="password" placeholder="Répétez votre mot de passe" value={pwConf} onChange={e=>setPwConf(e.target.value)} onKeyDown={e=>e.key==="Enter"&&save()}/>
+        {pwNew&&pwConf&&(
+          <div style={{marginBottom:12,fontSize:13}}>
+            {pwNew===pwConf
+              ?<span style={{color:"#22c55e"}}>✅ Les mots de passe correspondent</span>
+              :<span style={{color:"#ef4444"}}>❌ Ne correspondent pas</span>}
+          </div>
+        )}
+        <button style={{...S.btn,opacity:loading?0.6:1,marginBottom:10}} onClick={save} disabled={loading}>
+          {loading?"⏳ Enregistrement…":"✅ Définir mon mot de passe"}
+        </button>
+        <button style={{...S.btnOutline,fontSize:13,padding:"10px"}} onClick={logout}>Se déconnecter</button>
+      </div>
+    </div>
+  );
+}
+
+function Page404({setPage}) {
+  return (
+    <div style={{...S.authPage,flexDirection:"column",gap:0}}>
+      <div style={{textAlign:"center",maxWidth:480,padding:24}}>
+        <div style={{fontSize:80,marginBottom:8,filter:"grayscale(0.3)"}}>🍽️</div>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:80,fontWeight:800,color:"#d4a853",lineHeight:1,marginBottom:8}}>404</div>
+        <h1 style={{fontFamily:"'Playfair Display',serif",fontSize:24,color:"#f3f4f6",marginBottom:12}}>Table introuvable !</h1>
+        <p style={{fontSize:15,color:"#9ca3af",lineHeight:1.7,marginBottom:28}}>
+          Cette page n'existe pas, comme ce plat qui n'est plus à la carte.<br/>
+          Retournez à l'accueil pour trouver votre bonheur.
+        </p>
+        <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
+          <button style={{...S.btn,width:"auto",padding:"13px 28px",fontSize:15}} onClick={()=>setPage("login")}>🏠 Retour à l'accueil</button>
+        </div>
+        <div style={{marginTop:32,padding:20,background:"#161b22",borderRadius:12,border:"1px solid #30363d"}}>
+          <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,color:"#d4a853",marginBottom:8}}>Notre menu du jour</div>
+          <div style={{fontSize:13,color:"#6b7280",lineHeight:1.8}}>
+            🥗 Salade de liens brisés<br/>
+            🍝 Spaghetti aux erreurs 404<br/>
+            🍮 Crème brûlée aux pixels perdus
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LoginPage({login,setPage}) {
   const [email,setEmail]=useState(""); const [pw,setPw]=useState(""); const [rem,setRem]=useState(false); const [loading,setLoading]=useState(false);
   const go=async()=>{if(!email||!pw)return;setLoading(true);await login(email,pw,rem);setLoading(false);};
@@ -797,8 +898,9 @@ function CashierPage({menu,users,placeOrder,payOrder,invoices,settings,currentUs
           <div style={S.card}>
             <h3 style={{...S.cardTitle,fontSize:14,marginBottom:10}}>📍 Mode</h3>
             <div style={{display:"flex",gap:8,marginBottom:10}}>
-              <div style={{...S.orderTypeBtn,flex:1,fontSize:12,...(orderType==="surplace"?S.orderTypeBtnActive:{})}} onClick={()=>setOrderType("surplace")}>🪑 Sur place</div>
-              <div style={{...S.orderTypeBtn,flex:1,fontSize:12,...(orderType==="emporter"?S.orderTypeBtnActive:{})}} onClick={()=>setOrderType("emporter")}>🥡 Emporter</div>
+              <div style={{...S.orderTypeBtn,flex:1,fontSize:11,...(orderType==="surplace"?S.orderTypeBtnActive:{})}} onClick={()=>setOrderType("surplace")}>🪑 Sur place</div>
+              <div style={{...S.orderTypeBtn,flex:1,fontSize:11,...(orderType==="emporter"?S.orderTypeBtnActive:{})}} onClick={()=>setOrderType("emporter")}>🥡 Emporter</div>
+              <div style={{...S.orderTypeBtn,flex:1,fontSize:11,...(orderType==="drive"?S.orderTypeBtnActive:{})}} onClick={()=>setOrderType("drive")}>🚗 Drive</div>
             </div>
             {orderType==="surplace"&&<input style={{...S.input,marginBottom:0}} placeholder="N° de table" value={tableNum} onChange={e=>setTableNum(e.target.value)}/>}
           </div>
@@ -1365,32 +1467,45 @@ function ReviewsPage({reviews,updateReviews,currentUser,showToast}) {
 // CONTACT
 // ═══════════════════════════════════════════════════════════════════════════════
 function ContactPage({settings}) {
-  const info=[
-    {icon:"🏠",label:"Restaurant",value:settings.restaurantName},
-    {icon:"📍",label:"Adresse",value:settings.address},
-    {icon:"📞",label:"Téléphone",value:settings.phone},
-    {icon:"✉️",label:"Email",value:settings.email},
-    {icon:"🕐",label:"Horaires",value:settings.hours},
-    {icon:"🏢",label:"SIRET",value:settings.siret},
-  ];
+  const DAYS=[["lundi","Lun"],["mardi","Mar"],["mercredi","Mer"],["jeudi","Jeu"],["vendredi","Ven"],["samedi","Sam"],["dimanche","Dim"]];
+  const hours=typeof settings.hours==="object"?settings.hours:null;
+  const todayKey=["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"][new Date().getDay()];
+  const todayHours=hours?hours[todayKey]:null;
+  const isOpen=todayHours&&todayHours!=="Fermé";
   return (
     <div style={S.page}>
       <h1 style={S.pageTitle}>📍 Nous contacter</h1>
+      {/* Statut ouvert/fermé */}
+      <div style={{...S.card,textAlign:"center",padding:20,border:`1px solid ${isOpen?"#166534":"#991b1b"}`,background:isOpen?"#0a1a0a":"#1a0a0a"}}>
+        <div style={{fontSize:32,marginBottom:6}}>{isOpen?"✅":"🔒"}</div>
+        <div style={{fontWeight:700,fontSize:18,color:isOpen?"#86efac":"#fca5a5"}}>{isOpen?"Ouvert maintenant":"Fermé actuellement"}</div>
+        {todayHours&&<div style={{fontSize:13,color:"#9ca3af",marginTop:4}}>Aujourd'hui : {todayHours}</div>}
+      </div>
+      {/* Infos */}
       <div style={S.card}>
-        {info.map(({icon,label,value})=>value&&(
+        {[["🏠","Restaurant",settings.restaurantName],["📍","Adresse",settings.address],["📞","Téléphone",settings.phone],["✉️","Email",settings.email],["🏢","SIRET",settings.siret]].map(([icon,label,val])=>val&&(
           <div key={label} style={{...S.row,alignItems:"flex-start",paddingTop:14,paddingBottom:14}}>
             <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
               <span style={{fontSize:22,flexShrink:0}}>{icon}</span>
-              <div><div style={{fontSize:11,color:"#9ca3af",fontWeight:600,marginBottom:2}}>{label}</div><div style={{fontWeight:600}}>{value}</div></div>
+              <div><div style={{fontSize:11,color:"#9ca3af",fontWeight:600,marginBottom:2}}>{label}</div><div style={{fontWeight:600}}>{val}</div></div>
             </div>
           </div>
         ))}
+        {settings.googleMapsUrl&&<a href={settings.googleMapsUrl} target="_blank" rel="noreferrer" style={{display:"flex",alignItems:"center",gap:10,padding:"14px 0",borderTop:"1px solid #21262d",color:"#3b82f6",textDecoration:"none",fontWeight:600}}>
+          <span style={{fontSize:22}}>🗺️</span><span>Voir sur Google Maps</span>
+        </a>}
       </div>
-      <div style={{...S.card,textAlign:"center",padding:32}}>
-        <div style={{fontSize:48,marginBottom:12}}>🍽️</div>
-        <div style={{fontFamily:"'Playfair Display',serif",fontSize:20,color:"#d4a853",marginBottom:8}}>{settings.restaurantName}</div>
-        <div style={{fontSize:14,color:"#9ca3af",lineHeight:1.7}}>{settings.address}<br/>📞 {settings.phone}<br/>✉️ {settings.email}</div>
-      </div>
+      {/* Horaires */}
+      {hours&&<div style={S.card}>
+        <h3 style={S.cardTitle}>🕐 Horaires d'ouverture</h3>
+        {DAYS.map(([key,short])=>{const h=hours[key]||"Fermé";const isToday=key===todayKey;return(
+          <div key={key} style={{display:"flex",justifyContent:"space-between",padding:"9px 0",borderBottom:"1px solid #21262d",background:isToday?"transparent":"transparent"}}>
+            <div style={{fontWeight:isToday?700:400,color:isToday?"#d4a853":"#f3f4f6",fontSize:14}}>{isToday?"→ ":""}{key.charAt(0).toUpperCase()+key.slice(1)}</div>
+            <div style={{color:h==="Fermé"?"#6b7280":isToday?"#d4a853":"#9ca3af",fontWeight:isToday?700:400,fontSize:14}}>{h}</div>
+          </div>
+        );})}
+      </div>}
+      {!hours&&settings.hours&&<div style={S.card}><h3 style={S.cardTitle}>🕐 Horaires</h3><div style={{color:"#9ca3af"}}>{settings.hours}</div></div>}
     </div>
   );
 }
@@ -1699,7 +1814,9 @@ function AdminProducts({menu,updateMenu,showToast}) {
         <h3 style={S.cardTitle}>{form.id?"✏️ Modifier":"＋ Nouveau"}</h3>
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>{cats.map(c=><div key={c} style={{...S.tab,...(form.cat===c?S.tabActive:{}),cursor:"pointer",fontSize:11,padding:"5px 9px"}} onClick={()=>setForm(p=>({...p,cat:c}))}>{CAT_ICONS[c]} {CAT_LABELS[c]}</div>)}</div>
         <label style={S.label}>Nom *</label><input style={S.input} value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))}/>
-        <label style={S.label}>Description</label><textarea style={{...S.input,resize:"vertical",minHeight:60}} value={form.desc||""} onChange={e=>setForm(p=>({...p,desc:e.target.value}))}/>
+        <label style={S.label}>Description courte</label><textarea style={{...S.input,resize:"vertical",minHeight:60}} value={form.desc||""} onChange={e=>setForm(p=>({...p,desc:e.target.value}))}/>
+        <label style={S.label}>📋 Détails du plat (ingrédients, préparation, origine…)</label><textarea style={{...S.input,resize:"vertical",minHeight:80}} placeholder="Ex: Entrecôte de bœuf charolais 250g, pommes de terre ratte sautées au beurre, sauce béarnaise maison..." value={form.details||""} onChange={e=>setForm(p=>({...p,details:e.target.value}))}/>
+        <label style={S.label}>⚠️ Allergènes</label><input style={S.input} placeholder="Ex: Gluten, Lactose, Œufs…" value={form.allergens||""} onChange={e=>setForm(p=>({...p,allergens:e.target.value}))}/>
         <div style={{display:"flex",gap:12}}><div style={{flex:1}}><label style={S.label}>Prix (€) *</label><input style={S.input} type="number" step="0.01" min="0" value={form.price} onChange={e=>setForm(p=>({...p,price:e.target.value}))}/></div><div style={{flex:1}}><label style={S.label}>Points</label><input style={S.input} type="number" min="0" value={form.points||""} onChange={e=>setForm(p=>({...p,points:e.target.value}))}/></div></div>
         <div style={{display:"flex",gap:8,marginBottom:12}}>
           <div style={{...S.orderTypeBtn,flex:1,fontSize:13,...(form.available?S.orderTypeBtnActive:{})}} onClick={()=>setForm(p=>({...p,available:true}))}>✅ Disponible</div>
@@ -1738,7 +1855,7 @@ function AdminClients({users,updateUsers,invoices,orders,showToast}) {
       const h=await hashPw(c.password||"client123");
       const newRef=c.refNumber||genRef();
       const newId=genId();
-      const newU={...c,id:newId,role:"client",points:c.points||0,refNumber:newRef,password:h,createdAt:new Date().toISOString()};
+      const newU={...c,id:newId,role:"client",points:c.points||0,refNumber:newRef,password:h,createdAt:new Date().toISOString(),mustChangePassword:true};
       nu=[...existing,newU];
       // Message de bienvenue
       const freshMsgs=await dbGet("messages")||[];
@@ -1865,10 +1982,15 @@ function AdminLoyalty({rewards,updateRewards,settings,updateSettings,users,showT
 }
 
 function AdminSettings({settings,updateSettings,currentUser,updateUsers,users,showToast,logout}) {
+  const DAYS=[["lundi","Lundi"],["mardi","Mardi"],["mercredi","Mercredi"],["jeudi","Jeudi"],["vendredi","Vendredi"],["samedi","Samedi"],["dimanche","Dimanche"]];
   const [employees,setEmployees]=useState(users.filter(u=>u.role==="employee"));
   const [form,setForm]=useState(null);
-  const [editContact,setEditContact]=useState(false);
+  const [section,setSection]=useState("infos");
   const [contactForm,setContactForm]=useState({...settings});
+  const [hoursForm,setHoursForm]=useState(typeof settings.hours==="object"?{...settings.hours}:{lundi:"10:00-00:00",mardi:"10:00-00:00",mercredi:"10:00-00:00",jeudi:"10:00-00:00",vendredi:"10:00-00:00",samedi:"09:30-00:00",dimanche:"Fermé"});
+  const [pushTitle,setPushTitle]=useState("");
+  const [pushBody,setPushBody]=useState("");
+  const [pushSending,setPushSending]=useState(false);
   useEffect(()=>setEmployees(users.filter(u=>u.role==="employee")),[users]);
 
   const saveEmp=async(e)=>{
@@ -1879,31 +2001,87 @@ function AdminSettings({settings,updateSettings,currentUser,updateUsers,users,sh
     else{if(!e.password||e.password.length<6)return showToast("Mot de passe min 6 car.","error");const h=await hashPw(e.password);nu=[...existing,{...e,id:genId(),role:"employee",points:0,refNumber:genRef(),password:h,createdAt:new Date().toISOString()}];}
     await updateUsers(nu);setForm(null);showToast("Employé sauvegardé ✅");
   };
-  const saveContact=async()=>{await updateSettings(contactForm);setEditContact(false);showToast("Infos mises à jour ✅");};
+  const saveContact=async()=>{await updateSettings({...contactForm,hours:hoursForm});showToast("Infos mises à jour ✅");};
+  const saveHours=async()=>{await updateSettings({...settings,hours:hoursForm});showToast("Horaires mis à jour ✅");};
+
+  const sendGlobalPush=async()=>{
+    if(!pushTitle.trim()||!pushBody.trim()) return showToast("Titre et message requis","error");
+    setPushSending(true);
+    const clients=users.filter(u=>u.role==="client");
+    let sent=0;
+    for(const cl of clients){
+      try{
+        const snap=await getDoc(doc(db,"restopro_push",cl.id));
+        if(snap.exists()){
+          await fetch("/api/send-push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subscription:JSON.parse(snap.data().sub),title:pushTitle,body:pushBody,tag:"promo",url:"/"})});
+          sent++;
+        }
+      }catch{}
+    }
+    setPushSending(false);setPushTitle("");setPushBody("");
+    showToast(`Notification envoyée à ${sent} client${sent>1?"s":""} ✅`);
+  };
+
+  const tabs=[["infos","📍 Infos"],["hours","🕐 Horaires"],["push","🔔 Notifs"],["employees","👨‍🍳 Employés"]];
 
   return(
     <div style={S.page}>
       <h1 style={S.pageTitle}>⚙️ Paramètres</h1>
-
-      {/* Infos restaurant */}
-      <div style={S.card}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <h3 style={{...S.cardTitle,marginBottom:0}}>📍 Infos du restaurant</h3>
-          <button style={S.btnSm} onClick={()=>{setContactForm({...settings});setEditContact(!editContact);}}>✏️ Modifier</button>
-        </div>
-        {!editContact&&[["🏠","Nom",settings.restaurantName],["📍","Adresse",settings.address],["📞","Tél",settings.phone],["✉️","Email",settings.email],["🕐","Horaires",settings.hours],["🏢","SIRET",settings.siret]].map(([icon,label,val])=>val&&(
-          <div key={label} style={S.row}><span style={{color:"#9ca3af",fontSize:13}}>{icon} {label}</span><span style={{fontWeight:600,fontSize:13,maxWidth:"60%",textAlign:"right"}}>{val}</span></div>
-        ))}
-        {editContact&&<>
-          {[["restaurantName","🏠 Nom du restaurant"],["address","📍 Adresse"],["phone","📞 Téléphone"],["email","✉️ Email"],["hours","🕐 Horaires"],["siret","🏢 SIRET"]].map(([key,label])=>(
-            <div key={key}><label style={S.label}>{label}</label><input style={S.input} value={contactForm[key]||""} onChange={e=>setContactForm(p=>({...p,[key]:e.target.value}))}/></div>
-          ))}
-          <div style={{display:"flex",gap:8}}><button style={{...S.btn,width:"auto"}} onClick={saveContact}>💾 Sauvegarder</button><button style={{...S.btnOutline,width:"auto"}} onClick={()=>setEditContact(false)}>Annuler</button></div>
-        </>}
+      <div style={{...S.tabBar,marginBottom:20}}>
+        {tabs.map(([k,l])=><div key={k} style={{...S.tab,...(section===k?S.tabActive:{})}} onClick={()=>setSection(k)}>{l}</div>)}
       </div>
 
-      {/* Employés */}
-      <div style={S.card}>
+      {/* ── Infos restaurant ── */}
+      {section==="infos"&&<div style={S.card}>
+        <h3 style={S.cardTitle}>📍 Informations du restaurant</h3>
+        {[["restaurantName","🏠 Nom du restaurant"],["address","📍 Adresse complète"],["phone","📞 Téléphone"],["email","✉️ Email"],["siret","🏢 SIRET"],["googleMapsUrl","🗺️ Lien Google Maps"]].map(([key,label])=>(
+          <div key={key}><label style={S.label}>{label}</label><input style={S.input} value={contactForm[key]||""} onChange={e=>setContactForm(p=>({...p,[key]:e.target.value}))}/></div>
+        ))}
+        <button style={{...S.btn,width:"auto"}} onClick={saveContact}>💾 Sauvegarder</button>
+      </div>}
+
+      {/* ── Horaires ── */}
+      {section==="hours"&&<div style={S.card}>
+        <h3 style={S.cardTitle}>🕐 Horaires d'ouverture</h3>
+        <div style={{fontSize:12,color:"#9ca3af",marginBottom:16}}>Format : HH:MM-HH:MM (ex: 10:00-23:00) ou "Fermé"</div>
+        {DAYS.map(([key,label])=>(
+          <div key={key} style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+            <div style={{width:90,fontWeight:600,fontSize:14,flexShrink:0,color:hoursForm[key]==="Fermé"?"#6b7280":"#f3f4f6"}}>{label}</div>
+            <input style={{...S.input,marginBottom:0,flex:1}} value={hoursForm[key]||""} onChange={e=>setHoursForm(p=>({...p,[key]:e.target.value}))} placeholder="10:00-23:00 ou Fermé"/>
+            <button style={{...S.btnSm,flexShrink:0}} onClick={()=>setHoursForm(p=>({...p,[key]:"Fermé"}))}>Fermé</button>
+          </div>
+        ))}
+        <button style={{...S.btn,width:"auto",marginTop:8}} onClick={saveHours}>💾 Sauvegarder</button>
+      </div>}
+
+
+      {/* ── Notifications push ── */}
+      {section==="push"&&<div style={S.card}>
+        <h3 style={S.cardTitle}>🔔 Notification globale clients</h3>
+        <div style={{background:"#1c1a00",border:"1px solid #d4a853",borderRadius:10,padding:12,marginBottom:16,fontSize:13,color:"#fde68a",lineHeight:1.7}}>
+          📱 Envoyez une notification push à <strong>tous vos clients</strong> qui ont activé les notifications (Android &amp; iOS).
+        </div>
+        <label style={S.label}>📣 Titre de la notification</label>
+        <input style={S.input} placeholder="Ex: 🎉 Promotion du soir !" value={pushTitle} onChange={e=>setPushTitle(e.target.value)} maxLength={50}/>
+        <div style={{fontSize:11,color:"#9ca3af",marginBottom:12,textAlign:"right"}}>{pushTitle.length}/50</div>
+        <label style={S.label}>💬 Message</label>
+        <textarea style={{...S.input,resize:"vertical",minHeight:80}} placeholder="Ex: 1 table de 2 personnes = -10% sur l'addition finale ce soir ! Réservez maintenant." value={pushBody} onChange={e=>setPushBody(e.target.value)} maxLength={200}/>
+        <div style={{fontSize:11,color:"#9ca3af",marginBottom:16,textAlign:"right"}}>{pushBody.length}/200</div>
+        {pushTitle&&pushBody&&<div style={{background:"#0d1117",borderRadius:12,padding:14,marginBottom:16,border:"1px solid #374151"}}>
+          <div style={{fontSize:11,color:"#9ca3af",marginBottom:6}}>Aperçu :</div>
+          <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+            <div style={{width:36,height:36,borderRadius:8,background:"#d4a853",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🍽️</div>
+            <div><div style={{fontWeight:700,fontSize:13}}>{pushTitle}</div><div style={{fontSize:12,color:"#9ca3af",marginTop:3}}>{pushBody}</div></div>
+          </div>
+        </div>}
+        <button style={{...S.btn,width:"auto",opacity:pushSending?0.6:1}} onClick={sendGlobalPush} disabled={pushSending}>
+          {pushSending?"⏳ Envoi en cours…":"📤 Envoyer à tous les clients"}
+        </button>
+        <div style={{fontSize:12,color:"#6b7280",marginTop:10}}>Seuls les clients ayant activé les notifications recevront le message.</div>
+      </div>}
+
+      {/* ── Employés ── */}
+      {section==="employees"&&<div style={S.card}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
           <h3 style={{...S.cardTitle,marginBottom:0}}>👨‍🍳 Employés ({employees.length})</h3>
           <button style={{...S.btn,width:"auto",padding:"8px 14px"}} onClick={()=>setForm({role:"employee",name:"",email:"",password:""})}>＋ Ajouter</button>
@@ -1915,7 +2093,7 @@ function AdminSettings({settings,updateSettings,currentUser,updateUsers,users,sh
             <div style={{display:"flex",gap:8}}><button style={S.btnSm} onClick={()=>setForm({...e,_newPw:""})}>✏️</button><button style={{...S.btnSm,...S.btnDanger}} onClick={async()=>{const ex=await dbGet("users")||[];await updateUsers(ex.filter(u=>u.id!==e.id));showToast("Supprimé");}}>🗑️</button></div>
           </div>
         ))}
-      </div>
+      </div>}
 
       <UserSettings currentUser={currentUser} users={users} updateUsers={updateUsers} showToast={showToast} setCurrentUser={()=>{}} logout={logout}/>
 
@@ -1944,7 +2122,7 @@ function EmpClients({users,updateUsers,showToast}) {
     if(existing.find(u=>u.email.toLowerCase()===email.toLowerCase())){setLoading(false);return showToast("Email déjà utilisé","error");}
     const hashed=await hashPw(pw);
     const ref=genRef();
-    const newUser={id:genId(),role:"client",name:name.trim(),email:email.trim(),password:hashed,points:0,refNumber:ref,createdAt:new Date().toISOString()};
+    const newUser={id:genId(),role:"client",name:name.trim(),email:email.trim(),password:hashed,points:0,refNumber:ref,createdAt:new Date().toISOString(),mustChangePassword:true};
     await updateUsers([...existing,newUser]);
     // Message automatique de bienvenue
     const freshMsgs=await dbGet("messages")||[];
@@ -2063,6 +2241,7 @@ function ClientMenu({menu,placeOrder,showToast,cart,setCart,setPage,currentUser,
   const cats=["entree","plat","dessert","boisson","menu"];
   const [activeTab,setActiveTab]=useState("entree");
   const [showCart,setShowCart]=useState(false);
+  const [detailModal,setDetailModal]=useState(null);
   const [orderType,setOrderType]=useState("surplace");
   const [payMode,setPayMode]=useState("comptoir");
   const [tableNum,setTableNum]=useState("");
@@ -2099,18 +2278,43 @@ function ClientMenu({menu,placeOrder,showToast,cart,setCart,setPage,currentUser,
       <div style={S.menuGrid} className="menu-grid-mobile">
         {items.length===0&&<p style={S.empty}>Aucun article</p>}
         {items.map(item=>(
-          <div key={item.id} style={S.menuCard} className="menu-card-mobile">
+          <div key={item.id} style={{...S.menuCard,cursor:"pointer"}} className="menu-card-mobile" onClick={()=>setDetailModal(item)}>
             <div style={{fontSize:32,marginBottom:8}}>{CAT_ICONS[item.cat]}</div>
             <div style={{fontWeight:700,fontSize:15,marginBottom:4}}>{item.name}</div>
-            <div style={{fontSize:12,color:"#9ca3af",flex:1}}>{item.desc}</div>
+            <div style={{fontSize:12,color:"#9ca3af",flex:1,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{item.desc}</div>
+            {item.details&&<div style={{fontSize:11,color:"#d4a853",marginTop:4}}>ℹ️ Voir détails</div>}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:10}}>
               <span style={{color:"#d4a853",fontWeight:700,fontSize:15}}>{fmt(item.price)}</span>
               <span style={{fontSize:11,color:"#9ca3af"}}>+{item.points} pts</span>
             </div>
-            <button style={{...S.btn,marginTop:8}} onClick={()=>{setItemModal(item);setItemNote("");}}>Ajouter</button>
+            <button style={{...S.btn,marginTop:8}} onClick={e=>{e.stopPropagation();setItemModal(item);setItemNote("");}}>Ajouter</button>
           </div>
         ))}
       </div>
+      {detailModal&&<div style={S.modal} className="modal-mobile"><div style={S.modalCard} className="modal-card-mobile">
+        <div style={{textAlign:"center",marginBottom:16}}>
+          <div style={{fontSize:48,marginBottom:8}}>{CAT_ICONS[detailModal.cat]}</div>
+          <h3 style={{fontFamily:"'Playfair Display',serif",fontSize:22,color:"#d4a853",marginBottom:4}}>{detailModal.name}</h3>
+          <div style={{fontSize:13,color:"#9ca3af"}}>{CAT_LABELS[detailModal.cat]}</div>
+        </div>
+        {detailModal.desc&&<div style={{background:"#0d1117",borderRadius:10,padding:14,marginBottom:12,fontSize:14,color:"#d1d5db",lineHeight:1.7}}>{detailModal.desc}</div>}
+        {detailModal.details&&<div style={{background:"#0d1117",borderRadius:10,padding:14,marginBottom:12}}>
+          <div style={{fontWeight:700,color:"#d4a853",marginBottom:8,fontSize:13}}>📋 Détails du plat</div>
+          <div style={{fontSize:13,color:"#d1d5db",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{detailModal.details}</div>
+        </div>}
+        {detailModal.allergens&&<div style={{background:"#1c1a00",border:"1px solid #d4a853",borderRadius:10,padding:12,marginBottom:12}}>
+          <div style={{fontWeight:700,color:"#d4a853",marginBottom:4,fontSize:13}}>⚠️ Allergènes</div>
+          <div style={{fontSize:13,color:"#fde68a"}}>{detailModal.allergens}</div>
+        </div>}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderTop:"1px solid #30363d",borderBottom:"1px solid #30363d",marginBottom:16}}>
+          <span style={{fontSize:20,fontWeight:700,color:"#d4a853"}}>{fmt(detailModal.price)}</span>
+          <span style={{fontSize:13,color:"#9ca3af"}}>⭐ +{detailModal.points} points</span>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button style={S.btn} onClick={()=>{setItemModal(detailModal);setDetailModal(null);setItemNote("");}}>🛒 Ajouter au panier</button>
+          <button style={{...S.btnOutline,width:"auto",padding:"12px 16px"}} onClick={()=>setDetailModal(null)}>✕</button>
+        </div>
+      </div></div>}
       {itemModal&&<div style={S.modal} className="modal-mobile"><div style={S.modalCard} className="modal-card-mobile">
         <h3 style={S.cardTitle}>{CAT_ICONS[itemModal.cat]} {itemModal.name}</h3>
         {itemModal.desc&&<p style={{fontSize:13,color:"#9ca3af",marginBottom:12}}>{itemModal.desc}</p>}
@@ -2205,7 +2409,7 @@ function ClientHistory({invoices,currentUser,settings,users}) {
       {mine.map(inv=>(
         <div key={inv.id} style={S.card}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-            <div><div style={{fontWeight:700}}>#{inv.id.slice(0,8).toUpperCase()}</div><div style={{fontSize:12,color:"#9ca3af"}}>{fmtDate(inv.paidAt)}</div><div style={{fontSize:12,color:"#9ca3af"}}>{inv.orderType==="surplace"?`🪑 Table ${inv.tableNumber}`:"🥡 À emporter"}</div></div>
+            <div><div style={{fontWeight:700}}>{inv.invoiceNum||'#'+inv.id.slice(0,8).toUpperCase()}</div><div style={{fontSize:12,color:"#9ca3af"}}>{fmtDate(inv.paidAt)}</div><div style={{fontSize:12,color:"#9ca3af"}}>{inv.orderType==="surplace"?`🪑 Table ${inv.tableNumber}`:"🥡 À emporter"}</div></div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
               <span style={{color:"#d4a853",fontWeight:700,fontSize:15}}>{fmt(inv.total)}</span>
               <button style={S.btnSm} onClick={()=>setExpanded(expanded===inv.id?null:inv.id)}>🔍</button>
@@ -2274,84 +2478,108 @@ function useBreakpoint() {
 const CSS=`
   @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@400;500;600&display=swap');
   *{box-sizing:border-box;margin:0;padding:0;}
-  body{background:#0d1117;overscroll-behavior:none;}
+  html{font-size:clamp(13px,1.5vw,15px);}
+  body{background:#0d1117;overscroll-behavior:none;-webkit-text-size-adjust:100%;}
   html,body{height:100%;width:100%;}
   ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:#161b22;}::-webkit-scrollbar-thumb{background:#374151;border-radius:3px;}
-  textarea,input,select,button{font-family:'DM Sans',sans-serif;-webkit-tap-highlight-color:transparent;}
+  textarea,input,select,button{font-family:'DM Sans',sans-serif;-webkit-tap-highlight-color:transparent;font-size:inherit;}
   @keyframes spin{to{transform:rotate(360deg)}}
   @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
   @keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-  .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#161b22;border-top:1px solid #30363d;z-index:500;padding-bottom:env(safe-area-inset-bottom);}
-  .bottom-nav-inner{display:flex;height:60px;}
-  .bottom-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;color:#6b7280;font-size:9px;font-weight:600;transition:color .15s;position:relative;-webkit-tap-highlight-color:transparent;}
-  .bottom-nav-item.active{color:#d4a853;}
-  .bottom-nav-item .nav-icon{font-size:20px;line-height:1;}
-  .bottom-nav-badge{position:absolute;top:6px;right:calc(50% - 16px);background:#d4a853;color:#0d1117;border-radius:8px;padding:1px 5px;font-size:9px;font-weight:800;}
   .sidebar-desktop{display:flex;}
   .auth-card-mobile{}
+
+  /* ── Mobile <640px ── */
   @media(max-width:639px){
-    .bottom-nav{display:block;}.sidebar-desktop{display:none!important;}
-    .auth-card-mobile{padding:24px 20px!important;margin:16px!important;border-radius:12px!important;}
-    .modal-mobile{padding:8px!important;align-items:flex-end!important;}.modal-card-mobile{border-radius:16px 16px 0 0!important;max-height:92vh!important;padding:18px!important;}
-    .menu-grid-mobile{grid-template-columns:repeat(2,1fr)!important;gap:10px!important;}.menu-card-mobile{padding:12px!important;}
+    html{font-size:14px;}
+    .sidebar-desktop{display:none!important;}
+    .auth-card-mobile{padding:20px 16px!important;margin:12px!important;border-radius:12px!important;}
+    .modal-mobile{padding:0!important;align-items:flex-end!important;}
+    .modal-card-mobile{border-radius:16px 16px 0 0!important;max-height:90dvh!important;padding:16px!important;width:100%!important;max-width:100%!important;}
+    .menu-grid-mobile{grid-template-columns:repeat(2,1fr)!important;gap:8px!important;}
+    .menu-card-mobile{padding:10px!important;}
     .stats-grid-mobile{grid-template-columns:repeat(2,1fr)!important;gap:8px!important;}
+    .page-mobile{padding:12px!important;}
+    .hide-mobile{display:none!important;}
+    .card-mobile{padding:14px!important;}
   }
+
+  /* ── Tablette 640-1023px ── */
   @media(min-width:640px) and (max-width:1023px){
-    .sidebar-desktop{width:72px!important;}.sidebar-label{display:none!important;}.sidebar-role-text{display:none!important;}
-    .sidebar-logo-text{display:none!important;}.nav-item-tablet{justify-content:center!important;padding:14px 0!important;}
+    html{font-size:14px;}
+    .sidebar-desktop{width:68px!important;}
+    .sidebar-label{display:none!important;}
+    .sidebar-role-text{display:none!important;}
+    .sidebar-logo-text{display:none!important;}
+    .nav-item-tablet{justify-content:center!important;padding:12px 0!important;}
     .menu-grid-tablet{grid-template-columns:repeat(3,1fr)!important;}
+    .stats-grid-tablet{grid-template-columns:repeat(3,1fr)!important;}
+  }
+
+  /* ── Grand écran >1400px ── */
+  @media(min-width:1400px){
+    html{font-size:15px;}
+  }
+
+  /* Touch targets minimum 44px pour mobile */
+  @media(max-width:639px){
+    button,a,[role=button]{min-height:40px;}
+    input,select,textarea{min-height:44px;font-size:16px!important;}
   }
 `;
 const CSS_TAG=<style dangerouslySetInnerHTML={{__html:CSS}}/>;
+
+// Fluid spacing helpers
+const sp=(d,t,m)=>({padding:`clamp(${m}px,${t}vw,${d}px)`});
 
 const S={
   app:{fontFamily:"'DM Sans',sans-serif",minHeight:"100vh",background:"#0d1117",color:"#f3f4f6"},
   loading:{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:"#0d1117"},
   spinner:{width:40,height:40,border:"3px solid #374151",borderTop:"3px solid #d4a853",borderRadius:"50%",animation:"spin 1s linear infinite"},
-  toast:{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:99999,padding:"12px 20px",borderRadius:10,color:"#fff",fontWeight:600,fontSize:14,boxShadow:"0 4px 24px rgba(0,0,0,.5)",whiteSpace:"nowrap",maxWidth:"90vw",textAlign:"center",animation:"fadeIn .2s ease"},
-  authPage:{minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0d1117,#161b22,#0d1117)",padding:16},
-  authCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:16,padding:40,width:"100%",maxWidth:400,boxShadow:"0 20px 60px rgba(0,0,0,.5)"},
-  logo:{fontSize:28,fontFamily:"'Playfair Display',serif",color:"#d4a853",textAlign:"center",marginBottom:8},
-  authTitle:{fontFamily:"'Playfair Display',serif",fontSize:22,fontWeight:700,textAlign:"center",marginBottom:24,color:"#f3f4f6"},
-  authLink:{textAlign:"center",marginTop:16,fontSize:13,color:"#9ca3af"},
+  toast:{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:99999,padding:"10px 18px",borderRadius:10,color:"#fff",fontWeight:600,fontSize:"clamp(12px,1.3vw,14px)",boxShadow:"0 4px 24px rgba(0,0,0,.5)",whiteSpace:"nowrap",maxWidth:"92vw",textAlign:"center",animation:"fadeIn .2s ease"},
+  authPage:{minHeight:"100dvh",display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#0d1117,#161b22,#0d1117)",padding:"clamp(12px,4vw,24px)"},
+  authCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:16,padding:"clamp(20px,5vw,40px)",width:"100%",maxWidth:400,boxShadow:"0 20px 60px rgba(0,0,0,.5)"},
+  logo:{fontSize:"clamp(22px,3vw,28px)",fontFamily:"'Playfair Display',serif",color:"#d4a853",textAlign:"center",marginBottom:8},
+  authTitle:{fontFamily:"'Playfair Display',serif",fontSize:"clamp(18px,2.5vw,22px)",fontWeight:700,textAlign:"center",marginBottom:20,color:"#f3f4f6"},
+  authLink:{textAlign:"center",marginTop:14,fontSize:"clamp(12px,1.2vw,13px)",color:"#9ca3af"},
   link:{color:"#d4a853",cursor:"pointer",fontWeight:600},
-  remRow:{display:"flex",alignItems:"center",gap:8,marginBottom:12},
+  remRow:{display:"flex",alignItems:"center",gap:8,marginBottom:10},
   layout:{display:"flex",height:"100dvh",overflow:"hidden"},
   sidebar:{width:220,height:"100dvh",overflowY:"auto",background:"#161b22",borderRight:"1px solid #30363d",display:"flex",flexDirection:"column",padding:"0 0 20px",flexShrink:0},
-  sidebarLogo:{fontFamily:"'Playfair Display',serif",fontSize:20,color:"#d4a853",padding:"20px 20px 8px",borderBottom:"1px solid #30363d",marginBottom:8},
-  sidebarRole:{padding:"4px 20px 8px",fontSize:12,color:"#9ca3af",fontWeight:600,textTransform:"uppercase",letterSpacing:1},
-  navItem:{display:"flex",alignItems:"center",gap:10,padding:"12px 20px",cursor:"pointer",color:"#9ca3af",fontSize:14,transition:"all .2s",borderLeft:"3px solid transparent"},
+  sidebarLogo:{fontFamily:"'Playfair Display',serif",fontSize:"clamp(16px,1.5vw,20px)",color:"#d4a853",padding:"18px 18px 8px",borderBottom:"1px solid #30363d",marginBottom:6},
+  sidebarRole:{padding:"4px 18px 8px",fontSize:"clamp(10px,1vw,12px)",color:"#9ca3af",fontWeight:600,textTransform:"uppercase",letterSpacing:1},
+  navItem:{display:"flex",alignItems:"center",gap:10,padding:"clamp(10px,1.2vw,12px) 18px",cursor:"pointer",color:"#9ca3af",fontSize:"clamp(12px,1.2vw,14px)",transition:"all .2s",borderLeft:"3px solid transparent"},
   navActive:{background:"#1f2937",color:"#d4a853",borderLeft:"3px solid #d4a853"},
   main:{flex:1,overflowY:"auto",background:"#0d1117",height:"100dvh"},
-  page:{padding:24,maxWidth:960,margin:"0 auto"},
-  pageTitle:{fontFamily:"'Playfair Display',serif",fontSize:24,fontWeight:700,color:"#f3f4f6",marginBottom:20},
-  pageHeader:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20},
-  card:{background:"#161b22",border:"1px solid #30363d",borderRadius:12,padding:20,marginBottom:16},
-  cardTitle:{fontFamily:"'Playfair Display',serif",fontSize:18,fontWeight:600,color:"#d4a853",marginBottom:16},
-  statsGrid:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:12,marginBottom:20},
-  statCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:12,padding:16,textAlign:"center"},
-  row:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #21262d"},
-  menuGrid:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:14},
-  menuCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:12,padding:18,display:"flex",flexDirection:"column"},
-  tabBar:{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"},
-  tab:{padding:"7px 14px",borderRadius:20,cursor:"pointer",fontSize:13,background:"#161b22",border:"1px solid #30363d",color:"#9ca3af",transition:"all .2s",whiteSpace:"nowrap"},
+  page:{padding:"clamp(12px,3vw,24px)",maxWidth:980,margin:"0 auto"},
+  pageTitle:{fontFamily:"'Playfair Display',serif",fontSize:"clamp(18px,2.5vw,24px)",fontWeight:700,color:"#f3f4f6",marginBottom:"clamp(12px,2vw,20px)"},
+  pageHeader:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"clamp(12px,2vw,20px)",flexWrap:"wrap",gap:8},
+  card:{background:"#161b22",border:"1px solid #30363d",borderRadius:"clamp(8px,1vw,12px)",padding:"clamp(12px,2vw,20px)",marginBottom:"clamp(10px,1.5vw,16px)"},
+  cardTitle:{fontFamily:"'Playfair Display',serif",fontSize:"clamp(15px,1.8vw,18px)",fontWeight:600,color:"#d4a853",marginBottom:"clamp(10px,1.5vw,16px)"},
+  statsGrid:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(clamp(100px,15vw,130px),1fr))",gap:"clamp(8px,1.2vw,12px)",marginBottom:"clamp(12px,2vw,20px)"},
+  statCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:"clamp(8px,1vw,12px)",padding:"clamp(10px,1.5vw,16px)",textAlign:"center"},
+  row:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"clamp(8px,1vw,10px) 0",borderBottom:"1px solid #21262d"},
+  menuGrid:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(clamp(140px,18vw,190px),1fr))",gap:"clamp(8px,1.2vw,14px)"},
+  menuCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:"clamp(8px,1vw,12px)",padding:"clamp(12px,1.5vw,18px)",display:"flex",flexDirection:"column"},
+  tabBar:{display:"flex",gap:"clamp(4px,.6vw,6px)",marginBottom:"clamp(10px,1.5vw,16px)",flexWrap:"wrap"},
+  tab:{padding:"clamp(5px,.8vw,7px) clamp(10px,1.2vw,14px)",borderRadius:20,cursor:"pointer",fontSize:"clamp(11px,1.1vw,13px)",background:"#161b22",border:"1px solid #30363d",color:"#9ca3af",transition:"all .2s",whiteSpace:"nowrap"},
   tabActive:{background:"#d4a853",color:"#0d1117",border:"1px solid #d4a853",fontWeight:600},
-  orderCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:12,padding:16,marginBottom:12},
-  orderHeader:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12},
-  statusBadge:{padding:"4px 10px",borderRadius:20,fontSize:11,fontWeight:600,color:"#fff",whiteSpace:"nowrap"},
-  modal:{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:99999,padding:20},
-  modalCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:16,padding:28,width:"100%",maxWidth:500,maxHeight:"90vh",overflowY:"auto",animation:"slideUp .2s ease"},
-  input:{display:"block",width:"100%",padding:"12px 14px",marginBottom:12,background:"#0d1117",border:"1px solid #30363d",borderRadius:8,color:"#f3f4f6",fontSize:16,outline:"none",WebkitAppearance:"none"},
-  label:{display:"block",fontSize:12,color:"#9ca3af",fontWeight:600,marginBottom:4},
-  btn:{padding:"12px 20px",background:"#d4a853",color:"#0d1117",border:"none",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:15,fontFamily:"'DM Sans',sans-serif",width:"100%",WebkitAppearance:"none"},
-  btnOutline:{padding:"12px 20px",background:"transparent",color:"#d4a853",border:"1px solid #d4a853",borderRadius:8,cursor:"pointer",fontWeight:600,fontSize:15,width:"100%"},
-  btnSm:{padding:"7px 12px",background:"#1f2937",color:"#d1d5db",border:"1px solid #374151",borderRadius:6,cursor:"pointer",fontSize:12,whiteSpace:"nowrap"},
+  orderCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:"clamp(8px,1vw,12px)",padding:"clamp(10px,1.5vw,16px)",marginBottom:"clamp(8px,1vw,12px)"},
+  orderHeader:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"clamp(8px,1vw,12px)"},
+  statusBadge:{padding:"3px 9px",borderRadius:20,fontSize:"clamp(10px,1vw,11px)",fontWeight:600,color:"#fff",whiteSpace:"nowrap"},
+  modal:{position:"fixed",inset:0,background:"rgba(0,0,0,.78)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:99999,padding:"clamp(8px,2vw,20px)"},
+  modalCard:{background:"#161b22",border:"1px solid #30363d",borderRadius:"clamp(12px,1.5vw,16px)",padding:"clamp(16px,2.5vw,28px)",width:"100%",maxWidth:520,maxHeight:"92dvh",overflowY:"auto",animation:"slideUp .2s ease"},
+  input:{display:"block",width:"100%",padding:"clamp(10px,1.2vw,12px) clamp(10px,1.2vw,14px)",marginBottom:"clamp(8px,1vw,12px)",background:"#0d1117",border:"1px solid #30363d",borderRadius:8,color:"#f3f4f6",fontSize:"clamp(14px,1.4vw,16px)",outline:"none",WebkitAppearance:"none"},
+  label:{display:"block",fontSize:"clamp(11px,1vw,12px)",color:"#9ca3af",fontWeight:600,marginBottom:4},
+  btn:{padding:"clamp(10px,1.2vw,12px) clamp(14px,2vw,20px)",background:"#d4a853",color:"#0d1117",border:"none",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:"clamp(13px,1.4vw,15px)",fontFamily:"'DM Sans',sans-serif",width:"100%",WebkitAppearance:"none"},
+  btnOutline:{padding:"clamp(10px,1.2vw,12px) clamp(14px,2vw,20px)",background:"transparent",color:"#d4a853",border:"1px solid #d4a853",borderRadius:8,cursor:"pointer",fontWeight:600,fontSize:"clamp(13px,1.4vw,15px)",width:"100%"},
+  btnSm:{padding:"clamp(5px,.8vw,7px) clamp(8px,1vw,12px)",background:"#1f2937",color:"#d1d5db",border:"1px solid #374151",borderRadius:6,cursor:"pointer",fontSize:"clamp(11px,1vw,12px)",whiteSpace:"nowrap"},
   btnDanger:{background:"#7f1d1d",color:"#fca5a5",border:"1px solid #991b1b"},
-  badge:{background:"#d4a853",color:"#0d1117",borderRadius:10,padding:"2px 7px",fontSize:10,fontWeight:700,marginLeft:4},
-  pill:{background:"#1f2937",color:"#d4a853",borderRadius:12,padding:"2px 8px",fontSize:11,fontWeight:600},
-  pillRed:{background:"#7f1d1d",color:"#fca5a5",borderRadius:12,padding:"2px 8px",fontSize:11,fontWeight:600},
-  empty:{color:"#6b7280",textAlign:"center",padding:"24px 0",fontSize:14},
-  orderTypeBtn:{flex:1,padding:"11px",borderRadius:10,cursor:"pointer",border:"2px solid #374151",textAlign:"center",fontSize:14,fontWeight:600,color:"#9ca3af",background:"#0d1117",transition:"all .2s",position:"relative"},
+  badge:{background:"#d4a853",color:"#0d1117",borderRadius:10,padding:"1px 6px",fontSize:"clamp(9px,.9vw,10px)",fontWeight:700,marginLeft:4},
+  pill:{background:"#1f2937",color:"#d4a853",borderRadius:12,padding:"2px 8px",fontSize:"clamp(10px,1vw,11px)",fontWeight:600},
+  pillRed:{background:"#7f1d1d",color:"#fca5a5",borderRadius:12,padding:"2px 8px",fontSize:"clamp(10px,1vw,11px)",fontWeight:600},
+  empty:{color:"#6b7280",textAlign:"center",padding:"clamp(16px,2vw,24px) 0",fontSize:"clamp(12px,1.2vw,14px)"},
+  orderTypeBtn:{flex:1,padding:"clamp(9px,1vw,11px)",borderRadius:10,cursor:"pointer",border:"2px solid #374151",textAlign:"center",fontSize:"clamp(12px,1.2vw,14px)",fontWeight:600,color:"#9ca3af",background:"#0d1117",transition:"all .2s",position:"relative"},
   orderTypeBtnActive:{border:"2px solid #d4a853",color:"#d4a853",background:"#1f1a00"},
 };
 
