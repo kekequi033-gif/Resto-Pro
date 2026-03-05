@@ -968,7 +968,41 @@ function OrdersView({orders,invoices,updateOrderStatus,users,settings,currentUse
 // ═══════════════════════════════════════════════════════════════════════════════
 // CAISSE
 // ═══════════════════════════════════════════════════════════════════════════════
-function CashierPage({menu,users,placeOrder,payOrder,invoices,settings,currentUser,showToast}) {
+function PendingPayForm({order,payOrder,currentUser,showToast,invoices}) {
+  const [payMode,setPayMode]=useState("cb");
+  const [cardLast4,setCardLast4]=useState("");
+  const [cardType,setCardType]=useState("VISA");
+  const [loading,setLoading]=useState(false);
+  const alreadyPaid=invoices.find(inv=>inv.orderId===order.id);
+  if(alreadyPaid) return <div style={{fontSize:12,color:"#22c55e",fontWeight:600}}>✅ Déjà encaissée — {alreadyPaid.invoiceNum}</div>;
+  const pay=async()=>{
+    if((payMode==="cb"||payMode==="mixed")&&!cardLast4.trim()) return showToast("4 derniers chiffres requis","error");
+    setLoading(true);
+    await payOrder({...order,cashierId:currentUser.id,cashierName:currentUser.name},payMode,cardLast4,cardType);
+    setLoading(false);
+    showToast("Commande encaissée ✅");
+  };
+  return (
+    <div style={{borderTop:"1px solid #30363d",paddingTop:12}}>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        {[["cb","💳 CB"],["cash","💵 Espèces"],["mixed","💳+💵"],["drive","🚗 Drive"]].map(([k,l])=>(
+          <div key={k} style={{...S.tab,...(payMode===k?S.tabActive:{}),cursor:"pointer",fontSize:12}} onClick={()=>setPayMode(k)}>{l}</div>
+        ))}
+      </div>
+      {(payMode==="cb"||payMode==="mixed")&&<div style={{display:"flex",gap:8,marginBottom:10}}>
+        <input style={{...S.input,marginBottom:0,flex:1}} placeholder="4 derniers chiffres" maxLength={4} value={cardLast4} onChange={e=>setCardLast4(e.target.value.replace(/\D/g,""))}/>
+        <select style={{...S.input,marginBottom:0,width:"auto"}} value={cardType} onChange={e=>setCardType(e.target.value)}>
+          <option>VISA</option><option>Mastercard</option><option>Amex</option>
+        </select>
+      </div>}
+      <button style={{...S.btn,opacity:loading?0.6:1}} onClick={pay} disabled={loading}>
+        {loading?"⏳…":`✅ Encaisser ${fmt(order.total)}`}
+      </button>
+    </div>
+  );
+}
+
+function CashierPage({menu,users,orders,placeOrder,payOrder,invoices,settings,currentUser,showToast}) {
   const cats=["entree","plat","dessert","boisson","menu"];
   const [activeTab,setActiveTab]=useState("plat");
   const [cart,setCart]=useState([]);
@@ -981,6 +1015,7 @@ function CashierPage({menu,users,placeOrder,payOrder,invoices,settings,currentUs
   const [clientSearch,setClientSearch]=useState("");
   const [lastInvoice,setLastInvoice]=useState(null);
   const [step,setStep]=useState("order");
+  const [cashierTab,setCashierTab]=useState("new"); // "new" | "pending"
   const {isMobile}=useBreakpoint();
   const clients=users.filter(u=>u.role==="client");
   const filtered=clientSearch.trim()===""?[]:clients.filter(c=>c.name.toLowerCase().includes(clientSearch.toLowerCase())||(c.refNumber&&c.refNumber.toLowerCase().includes(clientSearch.toLowerCase())));
@@ -1017,10 +1052,63 @@ function CashierPage({menu,users,placeOrder,payOrder,invoices,settings,currentUs
   );
 
   const items=menu.filter(m=>m.cat===activeTab&&m.available);
+  // Commandes en attente de paiement (status waiting, prep, ready - pas encore payées)
+  const pendingOrders=(orders||[]).filter(o=>["waiting","prep","ready"].includes(o.status)&&!invoices.find(inv=>inv.orderId===o.id));
+
   return (
     <div style={S.page}>
       <h1 style={S.pageTitle}>🧾 Encaissement</h1>
-      <div style={S.tabBar}>{cats.map(c=><div key={c} style={{...S.tab,...(activeTab===c?S.tabActive:{})}} onClick={()=>setActiveTab(c)}>{CAT_ICONS[c]} {CAT_LABELS[c]}</div>)}</div>
+
+      {/* Tabs: Nouvelle commande / En attente */}
+      <div style={{...S.tabBar,marginBottom:16}}>
+        <div style={{...S.tab,...(cashierTab==="new"?S.tabActive:{})}} onClick={()=>setCashierTab("new")}>
+          ➕ Nouvelle commande
+        </div>
+        <div style={{...S.tab,...(cashierTab==="pending"?S.tabActive:{}),position:"relative"}} onClick={()=>setCashierTab("pending")}>
+          ⏳ En attente de paiement
+          {pendingOrders.length>0&&<span style={{marginLeft:6,background:"#ef4444",color:"#fff",borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:800}}>{pendingOrders.length}</span>}
+        </div>
+      </div>
+
+      {/* ── Tab : commandes en attente de paiement ── */}
+      {cashierTab==="pending"&&<div>
+        {pendingOrders.length===0
+          ?<p style={S.empty}>Aucune commande en attente de paiement</p>
+          :pendingOrders.sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt)).map(order=>(
+            <div key={order.id} style={{...S.card,border:"1px solid #374151"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:8,marginBottom:10}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15}}>{order.clientName||"Anonyme"}</div>
+                  {order.refNumber&&<div style={{fontSize:11,color:"#d4a853"}}>{order.refNumber}</div>}
+                  <div style={{fontSize:12,color:"#9ca3af",marginTop:2}}>
+                    {order.orderType==="surplace"?"🪑 Table "+order.tableNumber:order.orderType==="drive"?"🚗 Drive":"🥡 Emporter"}
+                    {" · "}{new Date(order.createdAt).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}
+                  </div>
+                </div>
+                <span style={{...S.statusBadge,background:order.status==="ready"?"#166534":order.status==="prep"?"#1e3a5f":"#374151"}}>
+                  {order.status==="waiting"?"⏳ En attente":order.status==="prep"?"👨‍🍳 En préparation":"✅ Prêt"}
+                </span>
+              </div>
+              <div style={{marginBottom:12}}>
+                {order.items.map((it,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:13,padding:"3px 0",borderBottom:"1px solid #21262d"}}>
+                    <span>{it.name} × {it.qty}</span>
+                    <span style={{color:"#d4a853"}}>{fmt(it.price*it.qty)}</span>
+                  </div>
+                ))}
+                <div style={{display:"flex",justifyContent:"space-between",fontWeight:700,fontSize:15,marginTop:8}}>
+                  <span>Total</span><span style={{color:"#d4a853"}}>{fmt(order.total)}</span>
+                </div>
+              </div>
+              {/* Paiement rapide */}
+              <PendingPayForm order={order} payOrder={payOrder} currentUser={currentUser} showToast={showToast} invoices={invoices}/>
+            </div>
+          ))
+        }
+      </div>}
+
+      {/* ── Tab : nouvelle commande ── */}
+      {cashierTab==="new"&&<div style={{display:"flex",gap:16,flexWrap:isMobile?"wrap":"nowrap"}}>
       <div style={{display:"flex",gap:16,flexWrap:isMobile?"wrap":"nowrap"}}>
         <div style={{flex:2,minWidth:0}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:10}}>
@@ -1088,6 +1176,7 @@ function CashierPage({menu,users,placeOrder,payOrder,invoices,settings,currentUs
           <button style={{...S.btn,fontSize:15}} onClick={confirm}>✅ Encaisser {fmt(total)}</button>
         </div>
       </div>
+      </div>} {/* end cashierTab==="new" */}
     </div>
   );
 }
