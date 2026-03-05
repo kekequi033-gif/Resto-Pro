@@ -1971,6 +1971,8 @@ function AdminSettings({settings,updateSettings,currentUser,updateUsers,users,sh
   const [pushTitle,setPushTitle]=useState("");
   const [pushBody,setPushBody]=useState("");
   const [pushSending,setPushSending]=useState(false);
+  const [resetConfirm,setResetConfirm]=useState("");
+  const [resetting,setResetting]=useState(false);
   useEffect(()=>setEmployees(users.filter(u=>u.role==="employee")),[users]);
 
   const saveEmp=async(e)=>{
@@ -1983,6 +1985,21 @@ function AdminSettings({settings,updateSettings,currentUser,updateUsers,users,sh
   };
   const saveContact=async()=>{await updateSettings({...contactForm,hours:hoursForm});showToast("Infos mises à jour ✅");};
   const saveHours=async()=>{await updateSettings({...settings,hours:hoursForm});showToast("Horaires mis à jour ✅");};
+
+  const doReset=async(what)=>{
+    setResetting(true);
+    if(what==="orders"||what==="all"){await dbSet("orders",[]);await dbSet("invoices",[]);}
+    if(what==="clients"||what==="all"){
+      const fresh=await dbGet("users")||[];
+      await updateUsers(fresh.filter(u=>u.role!=="client"));
+      await dbSet("messages",[]);
+      await dbSet("reviews",[]);
+      await dbSet("reservations",[]);
+    }
+    if(what==="menu"){await dbSet("menu",[]);}
+    setResetting(false);setResetConfirm("");
+    showToast("Remise à zéro effectuée ✅");
+  };
 
   const sendGlobalPush=async()=>{
     if(!pushTitle.trim()||!pushBody.trim()) return showToast("Titre et message requis","error");
@@ -2002,7 +2019,7 @@ function AdminSettings({settings,updateSettings,currentUser,updateUsers,users,sh
     showToast(`Notification envoyée à ${sent} client${sent>1?"s":""} ✅`);
   };
 
-  const tabs=[["infos","📍 Infos"],["hours","🕐 Horaires"],["push","🔔 Notifs"],["employees","👨‍🍳 Employés"]];
+  const tabs=[["infos","📍 Infos"],["hours","🕐 Horaires"],["push","🔔 Notifs"],["employees","👨‍🍳 Employés"],["reset","🗑️ Reset"]];
 
   return(
     <div style={S.page}>
@@ -2071,6 +2088,38 @@ function AdminSettings({settings,updateSettings,currentUser,updateUsers,users,sh
           <div key={e.id} style={S.row}>
             <div><div style={{fontWeight:700}}>{e.name}</div><div style={{fontSize:12,color:"#9ca3af"}}>{e.email}</div></div>
             <div style={{display:"flex",gap:8}}><button style={S.btnSm} onClick={()=>setForm({...e,_newPw:""})}>✏️</button><button style={{...S.btnSm,...S.btnDanger}} onClick={async()=>{const ex=await dbGet("users")||[];await updateUsers(ex.filter(u=>u.id!==e.id));showToast("Supprimé");}}>🗑️</button></div>
+          </div>
+        ))}
+      </div>}
+
+      {/* ── Reset ── */}
+      {section==="reset"&&<div style={S.card}>
+        <h3 style={{...S.cardTitle,color:"#fca5a5"}}>🗑️ Remise à zéro</h3>
+        <div style={{background:"#1a0a0a",border:"1px solid #991b1b",borderRadius:10,padding:14,marginBottom:20,fontSize:13,color:"#fca5a5",lineHeight:1.7}}>
+          ⚠️ Ces actions sont <strong>irréversibles</strong>. Les données supprimées ne peuvent pas être récupérées.
+        </div>
+
+        {[
+          {key:"orders",label:"🧾 Commandes & Factures",desc:"Supprime toutes les commandes et factures. Le menu et les clients sont conservés."},
+          {key:"clients",label:"👥 Clients, Messages & Avis",desc:"Supprime tous les comptes clients, messages, avis et réservations. Les employés sont conservés."},
+          {key:"menu",label:"🍽️ Menu complet",desc:"Supprime tous les produits du menu."},
+          {key:"all",label:"💥 TOUT remettre à zéro",desc:"Supprime clients, commandes, factures, messages, avis, réservations. Repart de zéro complet."},
+        ].map(({key,label,desc})=>(
+          <div key={key} style={{background:"#0d1117",border:"1px solid #374151",borderRadius:10,padding:14,marginBottom:12}}>
+            <div style={{fontWeight:700,fontSize:14,marginBottom:4,color:key==="all"?"#fca5a5":"#f3f4f6"}}>{label}</div>
+            <div style={{fontSize:12,color:"#9ca3af",marginBottom:12,lineHeight:1.6}}>{desc}</div>
+            {resetConfirm===key
+              ?<div>
+                <div style={{fontSize:13,color:"#fca5a5",marginBottom:10,fontWeight:600}}>⚠️ Confirmer ? Cette action est irréversible.</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button style={{...S.btnSm,background:"#7f1d1d",color:"#fca5a5",borderColor:"#991b1b",opacity:resetting?0.6:1}} onClick={()=>doReset(key)} disabled={resetting}>
+                    {resetting?"⏳ En cours…":"✅ Confirmer"}
+                  </button>
+                  <button style={S.btnSm} onClick={()=>setResetConfirm("")}>Annuler</button>
+                </div>
+              </div>
+              :<button style={{...S.btnSm,background:"#7f1d1d",color:"#fca5a5",borderColor:"#991b1b"}} onClick={()=>setResetConfirm(key)}>🗑️ Effacer</button>
+            }
           </div>
         ))}
       </div>}
