@@ -18,7 +18,7 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
 const dbGet = async (k) => { try { const s = await getDoc(doc(db,"restopro",k)); return s.exists()?s.data().value:null; } catch { return null; } };
-const dbSet = async (k,v) => { try { await setDoc(doc(db,"restopro",k),{value:v}); } catch(e) { console.error(e); } };
+const dbSet = async (k,v) => { try { await setDoc(doc(db,"restopro",k),{value:v}); return true; } catch(e) { console.error("dbSet error",k,e); return false; } };
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SESSION
@@ -323,15 +323,17 @@ export default function App() {
       rewardUsed:order.rewardUsed||null,payMode,cardLast4,cardType,
       cashierId:order.cashierId||currentUser?.id,cashierName:order.cashierName||currentUser?.name,
     };
-    await dbSet("invoices",[...freshInv,invoice]);
+    const saved = await dbSet("invoices",[...freshInv,invoice]);
     await dbSet("orders",freshOrd.map(o=>o.id===order.id?{...o,status:"paid"}:o));
+    if(!saved) console.error("INVOICE NOT SAVED - check Firestore rules");
     return invoice;
   };
 
   const updateOrderStatus=async(orderId,status)=>{
     const freshOrd=await dbGet("orders")||[];
     const order=freshOrd.find(o=>o.id===orderId);
-    const newOrd=status==="done"?freshOrd.filter(o=>o.id!==orderId):freshOrd.map(o=>o.id===orderId?{...o,status}:o);
+    // Keep orders with status "done" instead of deleting them
+    const newOrd=freshOrd.map(o=>o.id===orderId?{...o,status}:o);
     await dbSet("orders",newOrd);
     showToast("Statut mis à jour");
     if(status==="ready"&&order?.clientId){
@@ -363,11 +365,12 @@ export default function App() {
       {toast&&<div style={{...S.toast,background:toast.type==="error"?"#dc2626":"#166534"}}>{toast.msg}</div>}
       {!currentUser&&page==="login"    && <LoginPage    {...ctx}/>}
       {!currentUser&&page==="register" && <RegisterPage {...ctx}/>}
+      {!currentUser&&page==="guest-menu" && <GuestMenuPage {...ctx}/>}
       {currentUser&&page==="force-change-password" && <ForceChangePassword {...ctx}/>}
       {currentUser?.role==="admin"     && page!=="force-change-password" && <AdminLayout    {...ctx}/>}
       {currentUser?.role==="employee"  && page!=="force-change-password" && <EmployeeLayout {...ctx}/>}
       {currentUser?.role==="client"    && page!=="force-change-password" && <ClientLayout   {...ctx}/>}
-      {!currentUser&&page!=="login"&&page!=="register" && <Page404 setPage={setPage}/>}
+      {!currentUser&&!["login","register","guest-menu"].includes(page) && <Page404 setPage={setPage}/>}
     </div>
   );
 }
@@ -430,6 +433,150 @@ function ForceChangePassword({currentUser,updateUsers,users,setCurrentUser,setPa
   );
 }
 
+function GuestMenuPage({menu,settings,placeOrder,showToast,setPage}) {
+  const CAT_ICONS_G={"entree":"🥗","plat":"🍽️","dessert":"🍮","boisson":"🥤","menu":"📋"};
+  const CAT_LABELS_G={"entree":"Entrées","plat":"Plats","dessert":"Desserts","boisson":"Boissons","menu":"Menus"};
+  const cats=["entree","plat","dessert","boisson","menu"];
+  const [cart,setCart]=useState([]);
+  const [activeTab,setActiveTab]=useState("plat");
+  const [orderType,setOrderType]=useState("surplace");
+  const [tableNum,setTableNum]=useState("");
+  const [showCart,setShowCart]=useState(false);
+  const [detailModal,setDetailModal]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const available=menu.filter(m=>m.available);
+  const items=available.filter(m=>m.cat===activeTab);
+  const total=cart.reduce((s,i)=>s+i.price*i.qty,0);
+  const addToCart=(item)=>{setCart(p=>{const ex=p.find(x=>x.id===item.id);return ex?p.map(x=>x.id===item.id?{...x,qty:x.qty+1}:x):[...p,{...item,qty:1}];});};
+  const removeFromCart=(id)=>setCart(p=>p.map(x=>x.id===id?{...x,qty:x.qty-1}:x).filter(x=>x.qty>0));
+
+  const submitOrder=async()=>{
+    if(cart.length===0) return showToast("Panier vide","error");
+    if(orderType==="surplace"&&!tableNum.trim()) return showToast("Numéro de table requis","error");
+    setLoading(true);
+    // Guest user - anonymous order
+    const guestUser={id:"guest-"+genId(),role:"client",name:"Invité",points:0,refNumber:null};
+    await placeOrder(cart,orderType,tableNum.trim(),null,guestUser);
+    setCart([]);setShowCart(false);setLoading(false);
+    showToast("Commande envoyée ! 🎉");
+  };
+
+  return (
+    <div style={{...S.app,minHeight:"100dvh"}}>
+      {CSS_TAG}
+      {/* Header */}
+      <div style={{background:"#161b22",borderBottom:"1px solid #30363d",padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,zIndex:100}}>
+        <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,color:"#d4a853"}}>🍽️ {settings.restaurantName||"RestoPro"}</div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <span style={{fontSize:11,background:"#1f2937",color:"#9ca3af",padding:"3px 10px",borderRadius:20}}>👀 Mode invité</span>
+          {cart.length>0&&<button style={{...S.btnSm,background:"#d4a853",color:"#0d1117",fontWeight:700,position:"relative"}} onClick={()=>setShowCart(true)}>
+            🛒 {cart.reduce((s,i)=>s+i.qty,0)} — {fmt(total)}
+          </button>}
+          <button style={{...S.btnSm}} onClick={()=>setPage("login")}>🔑 Connexion</button>
+        </div>
+      </div>
+
+      {/* Bandeau fidélité */}
+      <div style={{background:"#1c1a00",borderBottom:"1px solid #d4a853",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <div style={{fontSize:13,color:"#fde68a"}}>⭐ Créez un compte gratuit pour cumuler des points de fidélité et bénéficier de récompenses !</div>
+        <button style={{...S.btnSm,background:"#d4a853",color:"#0d1117",fontWeight:700,flexShrink:0}} onClick={()=>setPage("register")}>Créer un compte</button>
+      </div>
+
+      <div style={{padding:"clamp(12px,3vw,20px)",maxWidth:980,margin:"0 auto"}}>
+        {/* Tabs catégories */}
+        <div style={S.tabBar}>
+          {cats.filter(cat=>available.some(m=>m.cat===cat)).map(cat=>(
+            <div key={cat} style={{...S.tab,...(activeTab===cat?S.tabActive:{})}} onClick={()=>setActiveTab(cat)}>
+              {CAT_ICONS_G[cat]} {CAT_LABELS_G[cat]}
+            </div>
+          ))}
+        </div>
+
+        {/* Grille plats */}
+        {items.length===0
+          ?<p style={S.empty}>Aucun article dans cette catégorie</p>
+          :<div style={S.menuGrid} className="menu-grid-mobile">
+            {items.map(item=>(
+              <div key={item.id} style={{...S.menuCard,cursor:"pointer"}} className="menu-card-mobile" onClick={()=>setDetailModal(item)}>
+                <div style={{fontSize:30,marginBottom:6}}>{CAT_ICONS_G[item.cat]}</div>
+                <div style={{fontWeight:700,fontSize:14,marginBottom:4}}>{item.name}</div>
+                <div style={{fontSize:11,color:"#9ca3af",flex:1,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{item.desc}</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+                  <span style={{color:"#d4a853",fontWeight:700,fontSize:15}}>{fmt(item.price)}</span>
+                  <span style={{fontSize:10,color:"#6b7280"}}>pas de points</span>
+                </div>
+                <button style={{...S.btn,marginTop:8,fontSize:13,padding:"9px"}} onClick={e=>{e.stopPropagation();addToCart(item);}}>+ Ajouter</button>
+              </div>
+            ))}
+          </div>
+        }
+      </div>
+
+      {/* Detail modal */}
+      {detailModal&&<div style={S.modal}><div style={S.modalCard} className="modal-card-mobile">
+        <div style={{textAlign:"center",marginBottom:14}}>
+          <div style={{fontSize:40,marginBottom:6}}>{CAT_ICONS_G[detailModal.cat]}</div>
+          <h3 style={{fontFamily:"'Playfair Display',serif",fontSize:20,color:"#d4a853",marginBottom:4}}>{detailModal.name}</h3>
+        </div>
+        {detailModal.desc&&<div style={{background:"#0d1117",borderRadius:10,padding:12,marginBottom:10,fontSize:13,color:"#d1d5db",lineHeight:1.7}}>{detailModal.desc}</div>}
+        {detailModal.details&&<div style={{background:"#0d1117",borderRadius:10,padding:12,marginBottom:10}}>
+          <div style={{fontWeight:700,color:"#d4a853",marginBottom:6,fontSize:12}}>📋 Détails</div>
+          <div style={{fontSize:13,color:"#d1d5db",lineHeight:1.8,whiteSpace:"pre-wrap"}}>{detailModal.details}</div>
+        </div>}
+        {detailModal.allergens&&<div style={{background:"#1c1a00",border:"1px solid #d4a853",borderRadius:10,padding:10,marginBottom:10}}>
+          <div style={{fontSize:12,color:"#fde68a"}}>⚠️ Allergènes : {detailModal.allergens}</div>
+        </div>}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderTop:"1px solid #30363d",marginBottom:14}}>
+          <span style={{fontSize:20,fontWeight:700,color:"#d4a853"}}>{fmt(detailModal.price)}</span>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button style={S.btn} onClick={()=>{addToCart(detailModal);setDetailModal(null);}}>🛒 Ajouter</button>
+          <button style={{...S.btnOutline,width:"auto",padding:"10px 14px"}} onClick={()=>setDetailModal(null)}>✕</button>
+        </div>
+      </div></div>}
+
+      {/* Panier modal */}
+      {showCart&&<div style={S.modal}><div style={S.modalCard} className="modal-card-mobile">
+        <h3 style={S.cardTitle}>🛒 Mon panier</h3>
+        {cart.map(item=>(
+          <div key={item.id} style={{...S.row}}>
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:14}}>{item.name}</div>
+              <div style={{fontSize:12,color:"#9ca3af"}}>{fmt(item.price)} × {item.qty}</div>
+            </div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <span style={{fontWeight:700,color:"#d4a853"}}>{fmt(item.price*item.qty)}</span>
+              <button style={{...S.btnSm,padding:"4px 10px"}} onClick={()=>removeFromCart(item.id)}>−</button>
+              <button style={{...S.btnSm,padding:"4px 10px"}} onClick={()=>addToCart(item)}>+</button>
+            </div>
+          </div>
+        ))}
+        <div style={{...S.row,borderBottom:"none",marginTop:8}}>
+          <span style={{fontWeight:700,fontSize:16}}>Total</span>
+          <span style={{fontWeight:700,fontSize:18,color:"#d4a853"}}>{fmt(total)}</span>
+        </div>
+
+        {/* Type commande */}
+        <div style={{display:"flex",gap:8,marginTop:14,marginBottom:14}}>
+          {[["surplace","🪑 Sur place"],["emporter","🥡 Emporter"],["drive","🚗 Drive"]].map(([k,l])=>(
+            <div key={k} style={{...S.orderTypeBtn,...(orderType===k?S.orderTypeBtnActive:{})}} onClick={()=>setOrderType(k)}>{l}</div>
+          ))}
+        </div>
+        {orderType==="surplace"&&<input style={S.input} placeholder="Numéro de table" value={tableNum} onChange={e=>setTableNum(e.target.value)}/>}
+
+        <div style={{background:"#1c1a00",border:"1px solid #d4a853",borderRadius:8,padding:10,marginBottom:14,fontSize:12,color:"#fde68a"}}>
+          ⭐ Connectez-vous pour gagner des points de fidélité sur cette commande !
+        </div>
+
+        <div style={{display:"flex",gap:8}}>
+          <button style={{...S.btn,opacity:loading?0.6:1}} onClick={submitOrder} disabled={loading}>{loading?"⏳…":"📤 Commander"}</button>
+          <button style={{...S.btnOutline,width:"auto",padding:"12px 14px"}} onClick={()=>setShowCart(false)}>✕</button>
+        </div>
+      </div></div>}
+    </div>
+  );
+}
+
 function Page404({setPage}) {
   return (
     <div style={{...S.authPage,flexDirection:"column",gap:0}}>
@@ -471,6 +618,14 @@ function LoginPage({login,setPage}) {
         <input style={S.input} placeholder="••••••••" value={pw} onChange={e=>setPw(e.target.value)} type="password" onKeyDown={e=>e.key==="Enter"&&go()} autoComplete="current-password"/>
         <div style={S.remRow}><input type="checkbox" checked={rem} onChange={e=>setRem(e.target.checked)} id="rem"/><label htmlFor="rem" style={{fontSize:13,color:"#9ca3af",cursor:"pointer"}}>Se souvenir de moi</label></div>
         <button style={{...S.btn,opacity:loading?0.6:1}} onClick={go} disabled={loading}>{loading?"⏳ Connexion…":"Se connecter"}</button>
+        <div style={{display:"flex",alignItems:"center",gap:12,margin:"16px 0"}}>
+          <div style={{flex:1,height:1,background:"#30363d"}}/>
+          <span style={{fontSize:12,color:"#6b7280"}}>ou</span>
+          <div style={{flex:1,height:1,background:"#30363d"}}/>
+        </div>
+        <button style={{...S.btnOutline,fontSize:14}} onClick={()=>setPage("guest-menu")}>
+          👀 Consulter le menu sans compte
+        </button>
         <p style={S.authLink}>Pas de compte ? <span style={S.link} onClick={()=>setPage("register")}>S'inscrire</span></p>
       </div>
     </div>
@@ -840,8 +995,7 @@ function CashierPage({menu,users,placeOrder,payOrder,invoices,settings,currentUs
     if((payMode==="cb"||payMode==="mixed")&&!cardLast4.trim()) return showToast("4 derniers chiffres requis","error");
     const order=await placeOrder(cart,orderType,tableNum,null,selectedClient);
     const inv=await payOrder({...order,cashierId:currentUser.id,cashierName:currentUser.name},payMode,cardLast4,cardType);
-    const freshInv=await dbGet("invoices")||[];
-    setLastInvoice(freshInv[freshInv.length-1]||inv);
+    setLastInvoice(inv);
     setStep("done"); showToast("Commande encaissée ✅");
   };
 
